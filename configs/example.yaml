@@ -1,0 +1,73 @@
+# Configuration file for SOR Poisson solver
+# Si/SiO2 system with finger gate structure
+#
+# Structure:
+# ---------------
+# Electrodes (surface)
+# ---------------
+# SiO2 (10nm)
+# ---------------
+# Si  (40nm)
+# ---------------
+
+# Computational domain
+domain:
+  size: [100e-9, 100e-9, 50e-9]  # [x, y, z] in meters (100nm x 100nm x 50nm)
+  grid_spacing: 5e-9  # h in meters (5nm, isotropic grid)
+
+# Material layer structure
+layers:
+  - material: "Si"
+    z_range: [0, 40e-9]  # 0-40nm: Silicon substrate
+    epsilon_r: 11.7
+
+  - material: "SiO2"
+    z_range: [40e-9, 50e-9]  # 40-50nm: Silicon oxide layer (10nm)
+    epsilon_r: 3.9
+
+# Electrode structure (multiple finger gates)
+electrodes:
+  - name: "finger_gate_1"
+    shape: "rectangle"
+    x_range: [10e-9, 30e-9]  # 10-30nm in x
+    y_range: [0, 100e-9]     # Full width in y
+    z_position: 45e-9        # Electrode bottom (5nm thick electrode)
+    voltage: -0.5            # -0.5V
+
+  - name: "finger_gate_2"
+    shape: "rectangle"
+    x_range: [40e-9, 60e-9]
+    y_range: [0, 100e-9]
+    z_position: 45e-9        # Electrode bottom (5nm thick electrode)
+    voltage: -1.0            # -1.0V
+
+  - name: "finger_gate_3"
+    shape: "rectangle"
+    x_range: [70e-9, 90e-9]
+    y_range: [0, 100e-9]
+    z_position: 45e-9        # Electrode bottom (5nm thick electrode)
+    voltage: -0.5            # -0.5V
+
+# SOR parameters
+solver:
+  omega: 1.5               # Relaxation parameter (1 < omega < 2, smaller for stability)
+  max_iterations: 10000    # Maximum iterations
+  tolerance: 1e-6          # Convergence tolerance threshold
+
+# Boundary conditions
+boundary_conditions:
+  z_top:
+    type: "neumann"                  # Neumann boundary condition
+    value: 0.0                       # dphi/dz = 0
+
+  z_bottom:
+    type: "neumann"
+    value: 0.0                       # dphi/dz = 0
+
+  x_sides:
+    type: "neumann"                  # or "periodic"
+    value: 0.0
+
+  y_sides:
+    type: "neumann"                  # or "periodic"
+    value: 0.0
