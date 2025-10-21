@@ -83,6 +83,11 @@ Extensive rule set including pycodestyle, Pyflakes, pyupgrade, flake8-bugbear, i
 **Special Allowances:**
 - Type hints encouraged but not strictly enforced
 
+**Comment Rules:**
+- All code comments must be written in English using ASCII characters only
+- Docstrings can contain non-ASCII characters for technical notation (e.g., Greek letters, mathematical symbols)
+- Inline comments: English only, no Japanese or other non-ASCII text
+
 
 ## Documentation Guidelines
 
