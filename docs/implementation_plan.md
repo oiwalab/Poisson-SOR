@@ -17,6 +17,31 @@
   ```
 - **推奨:** 等方的な格子間隔（dx = dy = dz）を使用してください。
 
+## 座標系とインデックス規則
+
+### 座標系
+- **z = 0nm**: 表面（電極が配置される位置）
+- **z軸の向き**: 負の方向に層が伸びる
+  - 例: SiO2層 (0nm → -10nm)、Si基板 (-10nm → -50nm)
+- **電極**: z = 0nm の表面に配置され、負の方向に厚みを持つ
+
+### 配列のインデックス順序
+- **配列shape**: `(nz, nx, ny)` - z軸が最初の次元
+- **インデックス表記**: `array[k, i, j]`
+  - `k`: z方向インデックス（k=0 が表面 z=0nm、k増加で z減少）
+  - `i`: x方向インデックス
+  - `j`: y方向インデックス
+- **ループ順序**: z軸が最も外側
+  ```python
+  for k in range(nz):      # z方向（最も外側）
+      for i in range(nx):  # x方向
+          for j in range(ny):  # y方向
+  ```
+
+### 境界条件の対応
+- **z_top** (k=0): 表面 (z=0nm)、電極がある場合はDirichlet BC
+- **z_bottom** (k=nz-1): 底面、通常はNeumann BC
+
 ## ディレクトリ構成
 
 ```
@@ -108,43 +133,51 @@ self.layers: List[Dict]  # 層構造定義のリスト
 
 ### 4. `config_example.yaml` - 構造定義の例
 **含まれる設定（フィンガーゲート構造の例）:**
+
+**重要な変更点（新しい座標系）:**
+- **z軸**: z = 0nm (表面) → z = -size_z (底面)
+- **z_range**: `[z_max, z_min]` の形式で **左側が大きい**
+- **z_position**: 電極底面の位置（負の値、z=0から負の方向）
+
 ```yaml
 # 計算領域
 domain:
-  size: [100e-9, 100e-9, 100e-9]  # [x, y, z] in meters
-  grid_spacing: [10e-9, 10e-9, 5e-9]  # z方向を細かく
+  size: [100e-9, 100e-9, 50e-9]  # [x, y, z] in meters
+  grid_spacing: 5e-9  # 等方格子（単位: m）
 
-# 材料層構造
+# 材料層構造（z = 0 (表面) → z = -50nm (底面)）
+# z_range は [z_max, z_min] の形式（左が大きい）
 layers:
-  - material: "Si"
-    z_range: [0, 50e-9]
-    epsilon_r: 11.7
-
   - material: "SiO2"
-    z_range: [50e-9, 100e-9]
+    z_range: [0, -10e-9]  # 0nm → -10nm (表面側)
     epsilon_r: 3.9
 
+  - material: "Si"
+    z_range: [-10e-9, -50e-9]  # -10nm → -50nm (底面側)
+    epsilon_r: 11.7
+
 # 電極構造（複数のフィンガーゲート）
+# z_position は電極底面の位置（負の値）
 electrodes:
   - name: "finger_gate_1"
     shape: "rectangle"
     x_range: [10e-9, 30e-9]
     y_range: [0, 100e-9]
-    z_position: 100e-9  # 表面
+    z_position: -5e-9  # 電極底面（z=0 → z=-5nm が電極）
     voltage: -0.5  # V
 
   - name: "finger_gate_2"
     shape: "rectangle"
     x_range: [40e-9, 60e-9]
     y_range: [0, 100e-9]
-    z_position: 100e-9
+    z_position: -5e-9
     voltage: -1.0  # V
 
   - name: "finger_gate_3"
     shape: "rectangle"
     x_range: [70e-9, 90e-9]
     y_range: [0, 100e-9]
-    z_position: 100e-9
+    z_position: -5e-9
     voltage: -0.5  # V
 
 # 将来的なマスクファイル対応の例（コメントアウト）

@@ -10,10 +10,12 @@ from typing import Dict, Optional, Tuple
 class PoissonSolver:
     """SOR法による3Dポアソンソルバ
 
+    新座標系: z = 0 (表面, k=0) → z = -size_z (底面, k=nz-1)
+
     Parameters
     ----------
     epsilon : np.ndarray
-        誘電率分布 (nx, ny, nz)
+        誘電率分布 (nz, nx, ny)
     grid_spacing : float
         格子間隔 h (m) - 等方格子のみサポート (dx = dy = dz = h)
     boundary_conditions : Dict
@@ -38,7 +40,7 @@ class PoissonSolver:
         electrode_voltages: Optional[np.ndarray] = None,
     ):
         self.epsilon = epsilon
-        self.nx, self.ny, self.nz = epsilon.shape
+        self.nz, self.nx, self.ny = epsilon.shape  # 配列shape: (nz, nx, ny)
         self.h = grid_spacing  # 等方格子間隔
         self.boundary_conditions = boundary_conditions
         self.omega = omega
@@ -66,7 +68,7 @@ class PoissonSolver:
         Parameters
         ----------
         rho : np.ndarray, optional
-            電荷密度分布 (C/m^3), shape=(nx, ny, nz)
+            電荷密度分布 (C/m^3), shape=(nz, nx, ny)
             Noneの場合はゼロとして扱う
         phi_initial : np.ndarray, optional
             初期ポテンシャル分布 (V)
@@ -74,17 +76,17 @@ class PoissonSolver:
         Returns
         -------
         phi : np.ndarray
-            ポテンシャル分布 (V), shape=(nx, ny, nz)
+            ポテンシャル分布 (V), shape=(nz, nx, ny)
         info : Dict
             収束情報（反復回数、最終残差等）
         """
         # 電荷密度の初期化
         if rho is None:
-            rho = np.zeros((self.nx, self.ny, self.nz))
+            rho = np.zeros((self.nz, self.nx, self.ny))
 
         # ポテンシャルの初期化
         if phi_initial is None:
-            phi = np.zeros((self.nx, self.ny, self.nz))
+            phi = np.zeros((self.nz, self.nx, self.ny))
         else:
             phi = phi_initial.copy()
 
@@ -139,26 +141,28 @@ class PoissonSolver:
 
         誘電率が不均一な場合の有限差分式を使用
         界面での誘電率は調和平均を使用
+
+        新座標系: 配列shape (nz, nx, ny), ループ順序 k (z) → i (x) → j (y)
         """
-        phi_new = phi.copy()
 
         # 内部の格子点のみ更新（境界は別途処理）
-        for i in range(1, self.nx - 1):
-            for j in range(1, self.ny - 1):
-                for k in range(1, self.nz - 1):
+        # z軸が最も外側のループ
+        for k in range(1, self.nz - 1):
+            for i in range(1, self.nx - 1):
+                for j in range(1, self.ny - 1):
                     # 電極領域はスキップ（電位固定）
-                    if self.electrode_mask is not None and self.electrode_mask[i, j, k]:
+                    if self.electrode_mask is not None and self.electrode_mask[k, i, j]:
                         continue
 
                     # 隣接点の誘電率を調和平均で近似
                     # ε_{i+1/2,j,k} = 2*ε_i*ε_{i+1} / (ε_i + ε_{i+1})
-                    eps_i = self.epsilon[i, j, k]
-                    eps_ip = self.epsilon[i + 1, j, k]
-                    eps_im = self.epsilon[i - 1, j, k]
-                    eps_jp = self.epsilon[i, j + 1, k]
-                    eps_jm = self.epsilon[i, j - 1, k]
-                    eps_kp = self.epsilon[i, j, k + 1]
-                    eps_km = self.epsilon[i, j, k - 1]
+                    eps_i = self.epsilon[k, i, j]
+                    eps_ip = self.epsilon[k, i + 1, j]
+                    eps_im = self.epsilon[k, i - 1, j]
+                    eps_jp = self.epsilon[k, i, j + 1]
+                    eps_jm = self.epsilon[k, i, j - 1]
+                    eps_kp = self.epsilon[k + 1, i, j]
+                    eps_km = self.epsilon[k - 1, i, j]
 
                     eps_xp = (
                         2 * eps_i * eps_ip / (eps_i + eps_ip)
@@ -202,75 +206,81 @@ class PoissonSolver:
 
                     A = ax + bx + ay + by + az + bz
 
-                    # 右辺の計算
+                    # 右辺の計算 (配列shape: (nz, nx, ny))
                     B = (
-                        ax * phi[i + 1, j, k]
-                        + bx * phi[i - 1, j, k]
-                        + ay * phi[i, j + 1, k]
-                        + by * phi[i, j - 1, k]
-                        + az * phi[i, j, k + 1]
-                        + bz * phi[i, j, k - 1]
-                        - rho[i, j, k] / self.epsilon_0
+                        ax * phi[k, i + 1, j]
+                        + bx * phi[k, i - 1, j]
+                        + ay * phi[k, i, j + 1]
+                        + by * phi[k, i, j - 1]
+                        + az * phi[k + 1, i, j]
+                        + bz * phi[k - 1, i, j]
+                        - rho[k, i, j] / self.epsilon_0
                     )
 
                     # SOR更新
                     if A != 0:
-                        phi_new[i, j, k] = (1 - self.omega) * phi[
-                            i, j, k
-                        ] + self.omega * (B / A)
+                        phi[k, i, j] = (1 - self.omega) * phi[k, i, j] + self.omega * (
+                            B / A
+                        )
 
-        return phi_new
+        return phi
 
     def apply_boundary_conditions(self, phi: np.ndarray) -> np.ndarray:
         """境界条件を適用
 
         基本的なNeumann/Dirichlet境界条件と周期境界条件に対応
+
+        新座標系:
+        - z_top (k=0): 表面 (z=0nm)
+        - z_bottom (k=nz-1): 底面 (z=-size_z)
+        - 配列shape: (nz, nx, ny)
         """
         phi_new = phi.copy()
         bc = self.boundary_conditions
 
         # z方向の境界条件
-        if bc.get("z_bottom", {}).get("type") == "neumann":
-            value = bc["z_bottom"].get("value", 0.0)
-            # ∂φ/∂z = value を中心差分で近似
-            phi_new[:, :, 0] = phi_new[:, :, 1] - value * self.h
-        elif bc.get("z_bottom", {}).get("type") == "dirichlet":
-            value = bc["z_bottom"].get("value", 0.0)
-            phi_new[:, :, 0] = value
-
-        # z_topの境界条件
+        # z_top: k=0 (表面, z=0nm)
         if bc.get("z_top", {}).get("type") == "neumann":
             value = bc["z_top"].get("value", 0.0)
-            phi_new[:, :, -1] = phi_new[:, :, -2] + value * self.h
+            # ∂φ/∂z = value を中心差分で近似
+            phi_new[0, :, :] = phi_new[1, :, :] - value * self.h
         elif bc.get("z_top", {}).get("type") == "dirichlet":
             value = bc["z_top"].get("value", 0.0)
-            phi_new[:, :, -1] = value
+            phi_new[0, :, :] = value
 
-        # x方向の境界条件
+        # z_bottom: k=nz-1 (底面, z=-size_z)
+        if bc.get("z_bottom", {}).get("type") == "neumann":
+            value = bc["z_bottom"].get("value", 0.0)
+            phi_new[-1, :, :] = phi_new[-2, :, :] + value * self.h
+        elif bc.get("z_bottom", {}).get("type") == "dirichlet":
+            value = bc["z_bottom"].get("value", 0.0)
+            phi_new[-1, :, :] = value
+
+        # x方向の境界条件 (i=0, i=nx-1)
         if bc.get("x_sides", {}).get("type") == "neumann":
             value = bc["x_sides"].get("value", 0.0)
-            phi_new[0, :, :] = phi_new[1, :, :] - value * self.h
-            phi_new[-1, :, :] = phi_new[-2, :, :] + value * self.h
-        elif bc.get("x_sides", {}).get("type") == "dirichlet":
-            value = bc["x_sides"].get("value", 0.0)
-            phi_new[0, :, :] = value
-            phi_new[-1, :, :] = value
-        elif bc.get("x_sides", {}).get("type") == "periodic":
-            phi_new[0, :, :] = phi_new[-2, :, :]
-            phi_new[-1, :, :] = phi_new[1, :, :]
-
-        # y方向の境界条件
-        if bc.get("y_sides", {}).get("type") == "neumann":
-            value = bc["y_sides"].get("value", 0.0)
             phi_new[:, 0, :] = phi_new[:, 1, :] - value * self.h
             phi_new[:, -1, :] = phi_new[:, -2, :] + value * self.h
-        elif bc.get("y_sides", {}).get("type") == "dirichlet":
-            value = bc["y_sides"].get("value", 0.0)
+        elif bc.get("x_sides", {}).get("type") == "dirichlet":
+            value = bc["x_sides"].get("value", 0.0)
             phi_new[:, 0, :] = value
             phi_new[:, -1, :] = value
-        elif bc.get("y_sides", {}).get("type") == "periodic":
+        elif bc.get("x_sides", {}).get("type") == "periodic":
             phi_new[:, 0, :] = phi_new[:, -2, :]
             phi_new[:, -1, :] = phi_new[:, 1, :]
+
+        # y方向の境界条件 (j=0, j=ny-1)
+        if bc.get("y_sides", {}).get("type") == "neumann":
+            value = bc["y_sides"].get("value", 0.0)
+            phi_new[:, :, 0] = phi_new[:, :, 1] - value * self.h
+            phi_new[:, :, -1] = phi_new[:, :, -2] + value * self.h
+        elif bc.get("y_sides", {}).get("type") == "dirichlet":
+            value = bc["y_sides"].get("value", 0.0)
+            phi_new[:, :, 0] = value
+            phi_new[:, :, -1] = value
+        elif bc.get("y_sides", {}).get("type") == "periodic":
+            phi_new[:, :, 0] = phi_new[:, :, -2]
+            phi_new[:, :, -1] = phi_new[:, :, 1]
 
         return phi_new
 
@@ -330,20 +340,23 @@ class PoissonSolver:
         """残差を計算
 
         L2ノルムを使用
+
+        新座標系: 配列shape (nz, nx, ny), ループ順序 k (z) → i (x) → j (y)
         """
         residual_array = np.zeros_like(phi)
 
-        for i in range(1, self.nx - 1):
-            for j in range(1, self.ny - 1):
-                for k in range(1, self.nz - 1):
+        # z軸が最も外側のループ
+        for k in range(1, self.nz - 1):
+            for i in range(1, self.nx - 1):
+                for j in range(1, self.ny - 1):
                     # ラプラシアンを計算（調和平均を使用）
-                    eps_i = self.epsilon[i, j, k]
-                    eps_ip = self.epsilon[i + 1, j, k]
-                    eps_im = self.epsilon[i - 1, j, k]
-                    eps_jp = self.epsilon[i, j + 1, k]
-                    eps_jm = self.epsilon[i, j - 1, k]
-                    eps_kp = self.epsilon[i, j, k + 1]
-                    eps_km = self.epsilon[i, j, k - 1]
+                    eps_i = self.epsilon[k, i, j]
+                    eps_ip = self.epsilon[k, i + 1, j]
+                    eps_im = self.epsilon[k, i - 1, j]
+                    eps_jp = self.epsilon[k, i, j + 1]
+                    eps_jm = self.epsilon[k, i, j - 1]
+                    eps_kp = self.epsilon[k + 1, i, j]
+                    eps_km = self.epsilon[k - 1, i, j]
 
                     eps_xp = (
                         2 * eps_i * eps_ip / (eps_i + eps_ip)
@@ -376,18 +389,18 @@ class PoissonSolver:
                         else 0
                     )
 
-                    # 等方格子での計算
+                    # 等方格子での計算 (配列shape: (nz, nx, ny))
                     laplacian = (
-                        eps_xp * (phi[i + 1, j, k] - phi[i, j, k])
-                        - eps_xm * (phi[i, j, k] - phi[i - 1, j, k])
-                        + eps_yp * (phi[i, j + 1, k] - phi[i, j, k])
-                        - eps_ym * (phi[i, j, k] - phi[i, j - 1, k])
-                        + eps_zp * (phi[i, j, k + 1] - phi[i, j, k])
-                        - eps_zm * (phi[i, j, k] - phi[i, j, k - 1])
+                        eps_xp * (phi[k, i + 1, j] - phi[k, i, j])
+                        - eps_xm * (phi[k, i, j] - phi[k, i - 1, j])
+                        + eps_yp * (phi[k, i, j + 1] - phi[k, i, j])
+                        - eps_ym * (phi[k, i, j] - phi[k, i, j - 1])
+                        + eps_zp * (phi[k + 1, i, j] - phi[k, i, j])
+                        - eps_zm * (phi[k, i, j] - phi[k - 1, i, j])
                     ) / self.h**2
 
                     # ポアソン方程式の残差: -∇⋅(ε∇ϕ) - ρ/ε₀
-                    residual_array[i, j, k] = -laplacian - rho[i, j, k] / self.epsilon_0
+                    residual_array[k, i, j] = -laplacian - rho[k, i, j] / self.epsilon_0
 
         # L2ノルム（等方格子）
         return np.sqrt(np.mean(residual_array**2)) * self.h**2

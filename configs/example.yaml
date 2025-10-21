@@ -1,13 +1,16 @@
 # Configuration file for SOR Poisson solver
 # Si/SiO2 system with finger gate structure
 #
+# New coordinate system:
+# z = 0nm (surface, electrodes)
+# z-axis extends in negative direction
+#
 # Structure:
+# z = 0nm: Surface (electrodes)
 # ---------------
-# Electrodes (surface)
+# SiO2 (0nm → -10nm)
 # ---------------
-# SiO2 (10nm)
-# ---------------
-# Si  (40nm)
+# Si  (-10nm → -50nm)
 # ---------------
 
 # Computational domain
@@ -16,36 +19,39 @@ domain:
   grid_spacing: 5e-9  # h in meters (5nm, isotropic grid)
 
 # Material layer structure
+# z_range format: [z_max, z_min] where z_max > z_min
 layers:
-  - material: "Si"
-    z_range: [0, 40e-9]  # 0-40nm: Silicon substrate
-    epsilon_r: 11.7
-
   - material: "SiO2"
-    z_range: [40e-9, 50e-9]  # 40-50nm: Silicon oxide layer (10nm)
+    z_range: [0, -10e-9]  # 0nm → -10nm: Silicon oxide layer (surface side)
     epsilon_r: 3.9
 
+  - material: "Si"
+    z_range: [-10e-9, -50e-9]  # -10nm → -50nm: Silicon substrate (bottom side)
+    epsilon_r: 11.7
+
 # Electrode structure (multiple finger gates)
+# z_position: electrode bottom position (negative value)
+# Electrode extends from z_position to z=0 (surface)
 electrodes:
   - name: "finger_gate_1"
     shape: "rectangle"
     x_range: [10e-9, 30e-9]  # 10-30nm in x
     y_range: [0, 100e-9]     # Full width in y
-    z_position: 45e-9        # Electrode bottom (5nm thick electrode)
+    z_position: -5e-9        # Electrode bottom at z=-5nm (5nm thick: z=0 → z=-5nm)
     voltage: -0.5            # -0.5V
 
   - name: "finger_gate_2"
     shape: "rectangle"
     x_range: [40e-9, 60e-9]
     y_range: [0, 100e-9]
-    z_position: 45e-9        # Electrode bottom (5nm thick electrode)
+    z_position: -5e-9        # Electrode bottom at z=-5nm
     voltage: -1.0            # -1.0V
 
   - name: "finger_gate_3"
     shape: "rectangle"
     x_range: [70e-9, 90e-9]
     y_range: [0, 100e-9]
-    z_position: 45e-9        # Electrode bottom (5nm thick electrode)
+    z_position: -5e-9        # Electrode bottom at z=-5nm
     voltage: -0.5            # -0.5V
 
 # SOR parameters

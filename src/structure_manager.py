@@ -88,14 +88,20 @@ class StructureManager:
             self.check_electrode_overlap()
 
     def _initialize_arrays(self) -> None:
-        """内部配列を初期化"""
-        self.epsilon_array = np.ones((self.nx, self.ny, self.nz))
-        self.electrode_mask = np.zeros((self.nx, self.ny, self.nz), dtype=bool)
-        self.electrode_voltages = np.zeros((self.nx, self.ny, self.nz))
-        self.charge_density = np.zeros((self.nx, self.ny, self.nz))
+        """内部配列を初期化
+
+        配列shape: (nz, nx, ny)
+        """
+        self.epsilon_array = np.ones((self.nz, self.nx, self.ny))
+        self.electrode_mask = np.zeros((self.nz, self.nx, self.ny), dtype=bool)
+        self.electrode_voltages = np.zeros((self.nz, self.nx, self.ny))
+        self.charge_density = np.zeros((self.nz, self.nx, self.ny))
 
     def _validate_layers(self) -> None:
         """層構造の妥当性をチェック
+
+        新しい座標系: z = 0 (表面) → z = -size_z (底面)
+        z_range は [z_max, z_min] の形式（左が大きい）
 
         - z方向の範囲が重複していないか
         - z方向の範囲に隙間がないか
@@ -109,18 +115,18 @@ class StructureManager:
         if not self.layers:
             return
 
-        # z_rangeでソート
-        sorted_layers = sorted(self.layers, key=lambda x: x.get("z_range", [0, 0])[0])
+        # z_range[0] (z_max) で降順ソート（表面から底面へ）
+        sorted_layers = sorted(self.layers, key=lambda x: x.get("z_range", [0, 0])[0], reverse=True)
 
         # 計算領域の範囲
-        domain_z_min = 0.0
-        domain_z_max = self.size_z
+        domain_z_top = 0.0  # 表面
+        domain_z_bottom = -self.size_z  # 底面
 
-        # 最初の層が0から始まるかチェック
-        first_z_min = sorted_layers[0].get("z_range", [0, 0])[0]
-        if abs(first_z_min - domain_z_min) > 1e-12:
+        # 最初の層が0で始まるかチェック（表面から）
+        first_z_max = sorted_layers[0].get("z_range", [0, 0])[0]
+        if abs(first_z_max - domain_z_top) > 1e-12:
             raise ValueError(
-                f"First layer must start at z=0, but starts at z={first_z_min * 1e9:.2f} nm"
+                f"First layer must start at z=0 (surface), but starts at z={first_z_max * 1e9:.2f} nm"
             )
 
         # 各層をチェック
@@ -128,50 +134,50 @@ class StructureManager:
             z_range = layer.get("z_range", [0, 0])
             material = layer.get("material", "Unknown")
 
-            # 範囲の妥当性チェック
-            if z_range[0] >= z_range[1]:
+            # 範囲の妥当性チェック（新座標系では z_range[0] > z_range[1]）
+            if z_range[0] <= z_range[1]:
                 raise ValueError(
                     f"Layer '{material}': Invalid z_range {z_range}. "
-                    f"z_min must be less than z_max"
+                    f"z_range must be [z_max, z_min] with z_max > z_min"
                 )
 
             # 計算領域内かチェック
-            if z_range[0] < domain_z_min or z_range[1] > domain_z_max:
+            if z_range[0] > domain_z_top or z_range[1] < domain_z_bottom:
                 raise ValueError(
                     f"Layer '{material}': z_range [{z_range[0] * 1e9:.2f}, {z_range[1] * 1e9:.2f}] nm "
-                    f"is outside domain [0, {domain_z_max * 1e9:.2f}] nm"
+                    f"is outside domain [{domain_z_top * 1e9:.2f}, {domain_z_bottom * 1e9:.2f}] nm"
                 )
 
             # 次の層との連続性をチェック
             if i < len(sorted_layers) - 1:
                 next_layer = sorted_layers[i + 1]
-                next_z_min = next_layer.get("z_range", [0, 0])[0]
-                current_z_max = z_range[1]
+                next_z_max = next_layer.get("z_range", [0, 0])[0]
+                current_z_min = z_range[1]
 
                 # 隙間チェック（数値誤差を考慮して1e-12 m = 1e-3 nm以下なら許容）
-                gap = next_z_min - current_z_max
+                gap = current_z_min - next_z_max
                 if abs(gap) > 1e-12:
                     if gap > 0:
                         raise ValueError(
                             f"Gap detected between layer '{material}' "
-                            f"(ends at {current_z_max * 1e9:.2f} nm) and "
-                            f"next layer (starts at {next_z_min * 1e9:.2f} nm). "
+                            f"(ends at {current_z_min * 1e9:.2f} nm) and "
+                            f"next layer (starts at {next_z_max * 1e9:.2f} nm). "
                             f"Gap size: {gap * 1e9:.2f} nm"
                         )
                     else:
                         raise ValueError(
                             f"Overlap detected between layer '{material}' "
-                            f"(ends at {current_z_max * 1e9:.2f} nm) and "
-                            f"next layer (starts at {next_z_min * 1e9:.2f} nm). "
+                            f"(ends at {current_z_min * 1e9:.2f} nm) and "
+                            f"next layer (starts at {next_z_max * 1e9:.2f} nm). "
                             f"Overlap size: {-gap * 1e9:.2f} nm"
                         )
 
         # 最後の層が計算領域の終わりまでカバーしているかチェック
-        last_z_max = sorted_layers[-1].get("z_range", [0, 0])[1]
-        if abs(last_z_max - domain_z_max) > 1e-12:
+        last_z_min = sorted_layers[-1].get("z_range", [0, 0])[1]
+        if abs(last_z_min - domain_z_bottom) > 1e-12:
             raise ValueError(
-                f"Last layer must end at z={domain_z_max * 1e9:.2f} nm, "
-                f"but ends at z={last_z_max * 1e9:.2f} nm"
+                f"Last layer must end at z={domain_z_bottom * 1e9:.2f} nm, "
+                f"but ends at z={last_z_min * 1e9:.2f} nm"
             )
 
     def generate_epsilon_array(self) -> np.ndarray:
@@ -179,10 +185,12 @@ class StructureManager:
 
         層構造に基づいて3D誘電率配列を生成
 
+        新座標系: z = 0 (表面, k=0) → z = -size_z (底面, k=nz-1)
+
         Returns
         -------
         epsilon_array : np.ndarray
-            比誘電率分布 (nx, ny, nz)
+            比誘電率分布 (nz, nx, ny)
         """
         if self.epsilon_array is None:
             self._initialize_arrays()
@@ -193,19 +201,22 @@ class StructureManager:
         # 各層の誘電率を設定
         for layer in self.layers:
             # material = layer.get('material', 'Unknown')
-            z_range = layer.get("z_range", [0, 0])
+            z_range = layer.get("z_range", [0, 0])  # [z_max, z_min] where z_max > z_min
             epsilon_r = layer.get("epsilon_r", 1.0)
 
-            # z方向のインデックス範囲を計算
-            k_min = int(z_range[0] / self.h)
-            k_max = int(z_range[1] / self.h)
+            # z座標をkインデックスに変換
+            # z = 0 → k = 0 (表面)
+            # z = -size_z → k = nz-1 (底面)
+            # k = -z / h
+            k_top = int(-z_range[0] / self.h)  # z_max (大きい方) → 小さいk
+            k_bottom = int(-z_range[1] / self.h)  # z_min (小さい方) → 大きいk
 
             # 範囲チェック
-            k_min = max(0, min(k_min, self.nz - 1))
-            k_max = max(0, min(k_max, self.nz - 1))
+            k_top = max(0, min(k_top, self.nz - 1))
+            k_bottom = max(0, min(k_bottom, self.nz - 1))
 
-            # 誘電率を設定
-            self.epsilon_array[:, :, k_min : k_max + 1] = epsilon_r
+            # 誘電率を設定 (配列shape: (nz, nx, ny))
+            self.epsilon_array[k_top : k_bottom + 1, :, :] = epsilon_r
 
         return self.epsilon_array
 
@@ -217,7 +228,7 @@ class StructureManager:
         Returns
         -------
         electrode_mask : np.ndarray
-            電極マスク (nx, ny, nz), dtype=bool
+            電極マスク (nz, nx, ny), dtype=bool
         """
         if self.electrode_mask is None:
             self._initialize_arrays()
@@ -242,34 +253,40 @@ class StructureManager:
     def _add_rectangle_electrode(self, electrode: Dict) -> None:
         """矩形電極をマスクに追加（3Dボリュームとして）
 
+        新座標系: z = 0 (表面, k=0) → z = -size_z (底面, k=nz-1)
+
         Parameters
         ----------
         electrode : Dict
             電極定義（x_range, y_range, z_position等）
-            z_positionは電極の底面位置、そこから計算領域の上端まで電極領域とする
+            z_positionは電極の底面位置（負の値）、そこから表面(z=0)まで電極領域とする
         """
         x_range = electrode.get("x_range", [0, 0])
         y_range = electrode.get("y_range", [0, 0])
-        z_position = electrode.get("z_position", 0)
+        z_position = electrode.get("z_position", 0)  # 電極底面（負の値）
 
         # インデックスに変換
         i_min = int(x_range[0] / self.h)
         i_max = int(x_range[1] / self.h)
         j_min = int(y_range[0] / self.h)
         j_max = int(y_range[1] / self.h)
-        k_min = int(z_position / self.h)  # 電極底面
-        k_max = self.nz - 1  # 計算領域の上端（z_top）
+
+        # 電極は表面(k=0, z=0)からz_position（負の値）まで
+        # k = -z / h なので、z_position (負) → k_bottom (正)
+        k_top = 0  # 表面（z=0）
+        k_bottom = int(-z_position / self.h)  # 電極底面
 
         # 範囲チェック
         i_min = max(0, min(i_min, self.nx - 1))
         i_max = max(0, min(i_max, self.nx - 1))
         j_min = max(0, min(j_min, self.ny - 1))
         j_max = max(0, min(j_max, self.ny - 1))
-        k_min = max(0, min(k_min, self.nz - 1))
-        k_max = max(0, min(k_max, self.nz - 1))
+        k_top = max(0, min(k_top, self.nz - 1))
+        k_bottom = max(0, min(k_bottom, self.nz - 1))
 
-        # マスクを設定（z_position以上の3Dボリューム）
-        self.electrode_mask[i_min : i_max + 1, j_min : j_max + 1, k_min : k_max + 1] = True
+        # マスクを設定（配列shape: (nz, nx, ny)）
+        # 電極領域: k_top から k_bottom まで
+        self.electrode_mask[k_top : k_bottom + 1, i_min : i_max + 1, j_min : j_max + 1] = True
 
     def get_electrode_voltages(self) -> np.ndarray:
         """電極電圧分布を取得
@@ -279,7 +296,7 @@ class StructureManager:
         Returns
         -------
         electrode_voltages : np.ndarray
-            電極電圧 (V), shape=(nx, ny, nz)
+            電極電圧 (V), shape=(nz, nx, ny)
         """
         if self.electrode_voltages is None:
             self._initialize_arrays()
@@ -293,26 +310,28 @@ class StructureManager:
             if shape == "rectangle":
                 x_range = electrode.get("x_range", [0, 0])
                 y_range = electrode.get("y_range", [0, 0])
-                z_position = electrode.get("z_position", 0)
+                z_position = electrode.get("z_position", 0)  # 電極底面（負の値）
 
                 # インデックスに変換
                 i_min = int(x_range[0] / self.h)
                 i_max = int(x_range[1] / self.h)
                 j_min = int(y_range[0] / self.h)
                 j_max = int(y_range[1] / self.h)
-                k_min = int(z_position / self.h)  # 電極底面
-                k_max = self.nz - 1  # 計算領域の上端（z_top）
+
+                # 電極は表面(k=0, z=0)からz_position（負の値）まで
+                k_top = 0  # 表面（z=0）
+                k_bottom = int(-z_position / self.h)  # 電極底面
 
                 # 範囲チェック
                 i_min = max(0, min(i_min, self.nx - 1))
                 i_max = max(0, min(i_max, self.nx - 1))
                 j_min = max(0, min(j_min, self.ny - 1))
                 j_max = max(0, min(j_max, self.ny - 1))
-                k_min = max(0, min(k_min, self.nz - 1))
-                k_max = max(0, min(k_max, self.nz - 1))
+                k_top = max(0, min(k_top, self.nz - 1))
+                k_bottom = max(0, min(k_bottom, self.nz - 1))
 
-                # 電圧を設定（z_position以上の3Dボリューム）
-                self.electrode_voltages[i_min : i_max + 1, j_min : j_max + 1, k_min : k_max + 1] = (
+                # 電圧を設定（配列shape: (nz, nx, ny)）
+                self.electrode_voltages[k_top : k_bottom + 1, i_min : i_max + 1, j_min : j_max + 1] = (
                     voltage
                 )
 
@@ -328,8 +347,8 @@ class StructureManager:
         ValueError
             電極が重複している場合
         """
-        # 各z位置での電極数をカウント
-        electrode_count = np.zeros((self.nx, self.ny, self.nz), dtype=int)
+        # 各位置での電極数をカウント (配列shape: (nz, nx, ny))
+        electrode_count = np.zeros((self.nz, self.nx, self.ny), dtype=int)
 
         for electrode in self.electrodes:
             shape = electrode.get("shape", "rectangle")
@@ -337,14 +356,14 @@ class StructureManager:
             if shape == "rectangle":
                 x_range = electrode.get("x_range", [0, 0])
                 y_range = electrode.get("y_range", [0, 0])
-                z_position = electrode.get("z_position", 0)
+                z_position = electrode.get("z_position", 0)  # 電極底面（負の値）
 
                 # インデックスに変換
                 i_min = int(x_range[0] / self.h)
                 i_max = int(x_range[1] / self.h)
                 j_min = int(y_range[0] / self.h)
                 j_max = int(y_range[1] / self.h)
-                k = int(z_position / self.h)
+                k = int(-z_position / self.h)  # 電極底面のkインデックス
 
                 # 範囲チェック
                 i_min = max(0, min(i_min, self.nx - 1))
@@ -353,15 +372,15 @@ class StructureManager:
                 j_max = max(0, min(j_max, self.ny - 1))
                 k = max(0, min(k, self.nz - 1))
 
-                # カウントを増やす
-                electrode_count[i_min : i_max + 1, j_min : j_max + 1, k] += 1
+                # カウントを増やす（配列shape: (nz, nx, ny)）
+                electrode_count[k, i_min : i_max + 1, j_min : j_max + 1] += 1
 
         # 重複チェック
         if np.any(electrode_count > 1):
             overlapping_positions = np.where(electrode_count > 1)
             raise ValueError(
                 f"Electrode overlap detected at {len(overlapping_positions[0])} positions. "
-                f"First overlap at grid indices: "
+                f"First overlap at grid indices (k, i, j): "
                 f"({overlapping_positions[0][0]}, {overlapping_positions[1][0]}, {overlapping_positions[2][0]})"
             )
 
@@ -371,12 +390,12 @@ class StructureManager:
         Parameters
         ----------
         rho : np.ndarray
-            電荷密度分布 (C/m^3), shape=(nx, ny, nz)
+            電荷密度分布 (C/m^3), shape=(nz, nx, ny)
         """
-        if rho.shape != (self.nx, self.ny, self.nz):
+        if rho.shape != (self.nz, self.nx, self.ny):
             raise ValueError(
                 f"Charge density shape {rho.shape} does not match "
-                f"grid size ({self.nx}, {self.ny}, {self.nz})"
+                f"grid size ({self.nz}, {self.nx}, {self.ny})"
             )
 
         self.charge_density = rho.copy()
@@ -384,14 +403,16 @@ class StructureManager:
     def get_grid_coordinates(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """グリッド座標を取得
 
+        新座標系: z = 0 (表面, k=0) → z = -size_z (底面, k=nz-1)
+
         Returns
         -------
         x, y, z : np.ndarray
             各方向の座標配列 (m)
         """
-        x = np.arange(self.nx) * self.dx
-        y = np.arange(self.ny) * self.dy
-        z = np.arange(self.nz) * self.dz
+        x = np.arange(self.nx) * self.h
+        y = np.arange(self.ny) * self.h
+        z = -np.arange(self.nz) * self.h  # z = -k * h (負の方向)
 
         return x, y, z
 
@@ -405,10 +426,8 @@ class StructureManager:
         """
         summary = []
         summary.append("=== Structure Summary ===")
-        summary.append(f"Grid size: ({self.nx}, {self.ny}, {self.nz})")
-        summary.append(
-            f"Grid spacing: ({self.dx * 1e9:.2f}, {self.dy * 1e9:.2f}, {self.dz * 1e9:.2f}) nm"
-        )
+        summary.append(f"Grid size (nz, nx, ny): ({self.nz}, {self.nx}, {self.ny})")
+        summary.append(f"Grid spacing (h): {self.h * 1e9:.2f} nm (isotropic)")
         summary.append(f"Number of layers: {len(self.layers)}")
         summary.append(f"Number of electrodes: {len(self.electrodes)}")
 
