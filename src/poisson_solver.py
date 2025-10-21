@@ -1,6 +1,6 @@
-"""SOR法による3Dポアソン方程式ソルバ
+"""3D Poisson equation solver using SOR method
 
-誘電率が不均一な系でのポアソン方程式 -∇⋅(ε∇ϕ)=ρ を解く
+Solves Poisson equation -∇⋅(ε∇φ)=ρ for systems with non-uniform permittivity
 """
 
 import numpy as np
@@ -8,24 +8,24 @@ from typing import Dict, Optional, Tuple
 
 
 class PoissonSolver:
-    """SOR法による3Dポアソンソルバ
+    """3D Poisson solver using SOR method
 
-    新座標系: z = 0 (表面, k=0) → z = -size_z (底面, k=nz-1)
+    New coordinate system: z = 0 (surface, k=0) -> z = -size_z (bottom, k=nz-1)
 
     Parameters
     ----------
     epsilon : np.ndarray
-        誘電率分布 (nz, nx, ny)
+        Permittivity distribution (nz, nx, ny)
     grid_spacing : float
-        格子間隔 h (m) - 等方格子のみサポート (dx = dy = dz = h)
+        Grid spacing h (m) - only isotropic grids supported (dx = dy = dz = h)
     boundary_conditions : Dict
-        境界条件の設定
+        Boundary condition settings
     omega : float
-        SOR緩和パラメータ (1 < omega < 2)
+        SOR relaxation parameter (1 < omega < 2)
     tolerance : float
-        収束判定の閾値
+        Convergence threshold
     max_iterations : int
-        最大反復回数
+        Maximum number of iterations
     """
 
     def __init__(
@@ -40,21 +40,21 @@ class PoissonSolver:
         electrode_voltages: Optional[np.ndarray] = None,
     ):
         self.epsilon = epsilon
-        self.nz, self.nx, self.ny = epsilon.shape  # 配列shape: (nz, nx, ny)
-        self.h = grid_spacing  # 等方格子間隔
+        self.nz, self.nx, self.ny = epsilon.shape  # Array shape: (nz, nx, ny)
+        self.h = grid_spacing  # Isotropic grid spacing
         self.boundary_conditions = boundary_conditions
         self.omega = omega
         self.tolerance = tolerance
         self.max_iterations = max_iterations
 
-        # 電極マスクと電圧
+        # Electrode mask and voltages
         self.electrode_mask = electrode_mask
         self.electrode_voltages = electrode_voltages
 
-        # 真空の誘電率 (F/m)
+        # Vacuum permittivity (F/m)
         self.epsilon_0 = 8.854187817e-12
 
-        # 収束履歴
+        # Convergence history
         self.residual_history = []
 
     def solve(
@@ -63,28 +63,28 @@ class PoissonSolver:
         phi_initial: Optional[np.ndarray] = None,
         verbose: bool = True,
     ) -> Tuple[np.ndarray, Dict]:
-        """ポアソン方程式を解く
+        """Solve the Poisson equation
 
         Parameters
         ----------
         rho : np.ndarray, optional
-            電荷密度分布 (C/m^3), shape=(nz, nx, ny)
-            Noneの場合はゼロとして扱う
+            Charge density distribution (C/m^3), shape=(nz, nx, ny)
+            Treated as zero if None
         phi_initial : np.ndarray, optional
-            初期ポテンシャル分布 (V)
+            Initial potential distribution (V)
 
         Returns
         -------
         phi : np.ndarray
-            ポテンシャル分布 (V), shape=(nz, nx, ny)
+            Potential distribution (V), shape=(nz, nx, ny)
         info : Dict
-            収束情報（反復回数、最終残差等）
+            Convergence information (iterations, final residual, etc.)
         """
-        # 電荷密度の初期化
+        # Initialize charge density
         if rho is None:
             rho = np.zeros((self.nz, self.nx, self.ny))
 
-        # ポテンシャルの初期化
+        # Initialize potential
         if phi_initial is None:
             phi = np.zeros((self.nz, self.nx, self.ny))
         else:
@@ -92,22 +92,22 @@ class PoissonSolver:
 
         self.residual_history = []
 
-        # 電極領域の電位を設定（固定値）
+        # Set electrode potential (fixed values)
         if self.electrode_mask is not None and self.electrode_voltages is not None:
             phi[self.electrode_mask] = self.electrode_voltages[self.electrode_mask]
 
-        # 初期の境界条件を適用
+        # Apply initial boundary conditions
         phi = self.apply_boundary_conditions(phi)
 
-        # SOR反復
+        # SOR iteration
         for iteration in range(self.max_iterations):
-            # SOR更新（内部点のみ、境界は更新しない）
+            # SOR update (interior points only, boundaries not updated)
             phi = self._sor_iteration(phi, rho)
 
-            # 境界条件を再適用（念のため）
+            # Reapply boundary conditions (for safety)
             phi = self.apply_boundary_conditions(phi)
 
-            # 残差計算
+            # Compute residual
             residual = self.compute_residual(phi, rho)
             self.residual_history.append(residual)
 
@@ -117,7 +117,7 @@ class PoissonSolver:
                 if (iteration + 1) % 10 == 0:
                     print(f"Iteration {iteration + 1}: Residual = {residual:.6e}")
 
-            # 収束判定
+            # Check convergence
             if residual < self.tolerance:
                 info = {
                     "converged": True,
@@ -128,7 +128,7 @@ class PoissonSolver:
             if np.isnan(residual) or np.isinf(residual):
                 raise ValueError("Residual became NaN or Inf, diverging solution.")
 
-        # 最大反復回数に到達
+        # Reached maximum iterations
         info = {
             "converged": False,
             "iterations": self.max_iterations,
@@ -137,25 +137,25 @@ class PoissonSolver:
         return phi, info
 
     def _sor_iteration(self, phi: np.ndarray, rho: np.ndarray) -> np.ndarray:
-        """SOR法による1回の反復更新
+        """Single iteration update using SOR method
 
-        誘電率が不均一な場合の有限差分式を使用
-        界面での誘電率は調和平均を使用
+        Uses finite difference formula for non-uniform permittivity
+        Harmonic mean is used for permittivity at interfaces
 
-        新座標系: 配列shape (nz, nx, ny), ループ順序 k (z) → i (x) → j (y)
+        New coordinate system: array shape (nz, nx, ny), loop order k (z) -> i (x) -> j (y)
         """
 
-        # 内部の格子点のみ更新（境界は別途処理）
-        # z軸が最も外側のループ
+        # Update only interior grid points (boundaries handled separately)
+        # z-axis is the outermost loop
         for k in range(1, self.nz - 1):
             for i in range(1, self.nx - 1):
                 for j in range(1, self.ny - 1):
-                    # 電極領域はスキップ（電位固定）
+                    # Skip electrode region (fixed potential)
                     if self.electrode_mask is not None and self.electrode_mask[k, i, j]:
                         continue
 
-                    # 隣接点の誘電率を調和平均で近似
-                    # ε_{i+1/2,j,k} = 2*ε_i*ε_{i+1} / (ε_i + ε_{i+1})
+                    # Approximate permittivity at neighboring points with harmonic mean
+                    # epsilon_{i+1/2,j,k} = 2*epsilon_i*epsilon_{i+1} / (epsilon_i + epsilon_{i+1})
                     eps_i = self.epsilon[k, i, j]
                     eps_ip = self.epsilon[k, i + 1, j]
                     eps_im = self.epsilon[k, i - 1, j]
@@ -195,7 +195,7 @@ class PoissonSolver:
                         else 0
                     )
 
-                    # 係数計算（等方格子）
+                    # Compute coefficients (isotropic grid)
                     h2 = self.h**2
                     ax = eps_xp / h2
                     bx = eps_xm / h2
@@ -206,7 +206,7 @@ class PoissonSolver:
 
                     A = ax + bx + ay + by + az + bz
 
-                    # 右辺の計算 (配列shape: (nz, nx, ny))
+                    # Compute right-hand side (array shape: (nz, nx, ny))
                     B = (
                         ax * phi[k, i + 1, j]
                         + bx * phi[k, i - 1, j]
@@ -217,7 +217,7 @@ class PoissonSolver:
                         - rho[k, i, j] / self.epsilon_0
                     )
 
-                    # SOR更新
+                    # SOR update
                     if A != 0:
                         phi[k, i, j] = (1 - self.omega) * phi[k, i, j] + self.omega * (
                             B / A
@@ -226,29 +226,29 @@ class PoissonSolver:
         return phi
 
     def apply_boundary_conditions(self, phi: np.ndarray) -> np.ndarray:
-        """境界条件を適用
+        """Apply boundary conditions
 
-        基本的なNeumann/Dirichlet境界条件と周期境界条件に対応
+        Supports basic Neumann/Dirichlet and periodic boundary conditions
 
-        新座標系:
-        - z_top (k=0): 表面 (z=0nm)
-        - z_bottom (k=nz-1): 底面 (z=-size_z)
-        - 配列shape: (nz, nx, ny)
+        New coordinate system:
+        - z_top (k=0): surface (z=0nm)
+        - z_bottom (k=nz-1): bottom (z=-size_z)
+        - Array shape: (nz, nx, ny)
         """
         phi_new = phi.copy()
         bc = self.boundary_conditions
 
-        # z方向の境界条件
-        # z_top: k=0 (表面, z=0nm)
+        # Boundary conditions in z direction
+        # z_top: k=0 (surface, z=0nm)
         if bc.get("z_top", {}).get("type") == "neumann":
             value = bc["z_top"].get("value", 0.0)
-            # ∂φ/∂z = value を中心差分で近似
+            # Approximate d_phi/d_z = value using central difference
             phi_new[0, :, :] = phi_new[1, :, :] - value * self.h
         elif bc.get("z_top", {}).get("type") == "dirichlet":
             value = bc["z_top"].get("value", 0.0)
             phi_new[0, :, :] = value
 
-        # z_bottom: k=nz-1 (底面, z=-size_z)
+        # z_bottom: k=nz-1 (bottom, z=-size_z)
         if bc.get("z_bottom", {}).get("type") == "neumann":
             value = bc["z_bottom"].get("value", 0.0)
             phi_new[-1, :, :] = phi_new[-2, :, :] + value * self.h
@@ -256,7 +256,7 @@ class PoissonSolver:
             value = bc["z_bottom"].get("value", 0.0)
             phi_new[-1, :, :] = value
 
-        # x方向の境界条件 (i=0, i=nx-1)
+        # Boundary conditions in x direction (i=0, i=nx-1)
         if bc.get("x_sides", {}).get("type") == "neumann":
             value = bc["x_sides"].get("value", 0.0)
             phi_new[:, 0, :] = phi_new[:, 1, :] - value * self.h
@@ -269,7 +269,7 @@ class PoissonSolver:
             phi_new[:, 0, :] = phi_new[:, -2, :]
             phi_new[:, -1, :] = phi_new[:, 1, :]
 
-        # y方向の境界条件 (j=0, j=ny-1)
+        # Boundary conditions in y direction (j=0, j=ny-1)
         if bc.get("y_sides", {}).get("type") == "neumann":
             value = bc["y_sides"].get("value", 0.0)
             phi_new[:, :, 0] = phi_new[:, :, 1] - value * self.h
@@ -285,26 +285,26 @@ class PoissonSolver:
         return phi_new
 
     def apply_surface_boundary(self, phi: np.ndarray) -> np.ndarray:
-        """表面での混合境界条件を適用
+        """Apply mixed boundary conditions at surface
 
-        電極がある位置: Dirichlet境界条件（電圧固定）
-        電極がない位置: Neumann境界条件（∂ϕ/∂z = 0）
+        At electrode positions: Dirichlet boundary condition (fixed voltage)
+        At non-electrode positions: Neumann boundary condition (d_phi/d_z = 0)
 
         Parameters
         ----------
         phi : np.ndarray
-            ポテンシャル分布
+            Potential distribution
 
         Returns
         -------
         phi_new : np.ndarray
-            境界条件適用後のポテンシャル分布
+            Potential distribution after applying boundary conditions
         """
         phi_new = phi.copy()
-        k_surface = -1  # 表面のz方向インデックス
+        k_surface = -1  # z-direction index of surface
 
         if self.electrode_mask is None or self.electrode_voltages is None:
-            # 電極情報がない場合はデフォルトのNeumann境界条件
+            # Use default Neumann boundary condition if no electrode info
             default_value = self.boundary_conditions.get("z_top", {}).get(
                 "default_neumann_value", 0.0
             )
@@ -316,14 +316,14 @@ class PoissonSolver:
                 )
             return phi_new
 
-        # 各グリッド点で境界条件を適用
+        # Apply boundary conditions at each grid point
         for i in range(self.nx):
             for j in range(self.ny):
                 if self.electrode_mask[i, j, k_surface]:
-                    # 電極がある場合: Dirichlet境界条件
+                    # If electrode exists: Dirichlet boundary condition
                     phi_new[i, j, k_surface] = self.electrode_voltages[i, j, k_surface]
                 else:
-                    # 電極がない場合: Neumann境界条件 (∂ϕ/∂z = 0)
+                    # If no electrode: Neumann boundary condition (d_phi/d_z = 0)
                     default_value = self.boundary_conditions.get("z_top", {}).get(
                         "default_neumann_value", 0.0
                     )
@@ -337,19 +337,19 @@ class PoissonSolver:
         return phi_new
 
     def compute_residual(self, phi: np.ndarray, rho: np.ndarray) -> float:
-        """残差を計算
+        """Compute residual
 
-        L2ノルムを使用
+        Uses L2 norm
 
-        新座標系: 配列shape (nz, nx, ny), ループ順序 k (z) → i (x) → j (y)
+        New coordinate system: array shape (nz, nx, ny), loop order k (z) -> i (x) -> j (y)
         """
         residual_array = np.zeros_like(phi)
 
-        # z軸が最も外側のループ
+        # z-axis is the outermost loop
         for k in range(1, self.nz - 1):
             for i in range(1, self.nx - 1):
                 for j in range(1, self.ny - 1):
-                    # ラプラシアンを計算（調和平均を使用）
+                    # Compute Laplacian (using harmonic mean)
                     eps_i = self.epsilon[k, i, j]
                     eps_ip = self.epsilon[k, i + 1, j]
                     eps_im = self.epsilon[k, i - 1, j]
@@ -389,7 +389,7 @@ class PoissonSolver:
                         else 0
                     )
 
-                    # 等方格子での計算 (配列shape: (nz, nx, ny))
+                    # Computation for isotropic grid (array shape: (nz, nx, ny))
                     laplacian = (
                         eps_xp * (phi[k, i + 1, j] - phi[k, i, j])
                         - eps_xm * (phi[k, i, j] - phi[k, i - 1, j])
@@ -399,8 +399,8 @@ class PoissonSolver:
                         - eps_zm * (phi[k, i, j] - phi[k - 1, i, j])
                     ) / self.h**2
 
-                    # ポアソン方程式の残差: -∇⋅(ε∇ϕ) - ρ/ε₀
+                    # Poisson equation residual: -∇⋅(ε∇φ) - ρ/ε_0
                     residual_array[k, i, j] = -laplacian - rho[k, i, j] / self.epsilon_0
 
-        # L2ノルム（等方格子）
+        # L2 norm (isotropic grid)
         return np.sqrt(np.mean(residual_array**2)) * self.h**2

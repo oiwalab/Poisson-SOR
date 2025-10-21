@@ -1,6 +1,6 @@
-"""可視化モジュール
+"""Visualization module
 
-ポテンシャル分布、電極パターン、収束履歴などを可視化
+Visualizes potential distribution, electrode patterns, convergence history, etc.
 """
 
 import numpy as np
@@ -20,36 +20,36 @@ def plot_potential_slice(
     save_path: Optional[str] = None,
     title: str = "Potential Distribution",
 ) -> None:
-    """ポテンシャル分布の2Dスライスをプロット
+    """Plot 2D slice of potential distribution
 
     Parameters
     ----------
     phi : np.ndarray
-        ポテンシャル分布 (nx, ny, nz)
+        Potential distribution (nx, ny, nz)
     x, y, z : np.ndarray
-        座標配列 (m)
+        Coordinate arrays (m)
     z_index : int, optional
-        z方向のスライス位置（インデックス）。Noneの場合は中央
+        Slice position in z direction (index). Center if None
     electrode_mask : np.ndarray, optional
-        電極マスク (nx, ny, nz)
+        Electrode mask (nx, ny, nz)
     save_path : str, optional
-        保存先のパス
+        Path to save file
     title : str
-        グラフのタイトル
+        Graph title
     """
     if z_index is None:
         z_index = phi.shape[2] // 2
 
-    # スライスを取得
+    # Get slice
     phi_slice = phi[:, :, z_index]
 
-    # プロット
+    # Plot
     fig, ax = plt.subplots(figsize=(8, 6))
 
-    # ポテンシャル分布
+    # Potential distribution
     im = ax.pcolormesh(x * 1e9, y * 1e9, phi_slice.T, cmap="RdBu_r", shading="auto")
 
-    # 電極位置を重ねて表示
+    # Overlay electrode positions
     if electrode_mask is not None:
         electrode_slice = electrode_mask[:, :, z_index]
         if electrode_slice.any():
@@ -67,7 +67,7 @@ def plot_potential_slice(
     ax.set_title(f"{title} at z={z[z_index] * 1e9:.1f} nm")
     ax.set_aspect("equal")
 
-    # カラーバー
+    # Color bar
     cbar = plt.colorbar(im, ax=ax)
     cbar.set_label("Potential (V)")
 
@@ -89,20 +89,20 @@ def plot_multiple_slices(
     electrode_mask: Optional[np.ndarray] = None,
     save_path: Optional[str] = None,
 ) -> None:
-    """複数のz位置でのポテンシャル分布をプロット
+    """Plot potential distribution at multiple z positions
 
     Parameters
     ----------
     phi : np.ndarray
-        ポテンシャル分布 (nx, ny, nz)
+        Potential distribution (nx, ny, nz)
     x, y, z : np.ndarray
-        座標配列 (m)
+        Coordinate arrays (m)
     z_indices : list, optional
-        z方向のスライス位置のリスト。Noneの場合は均等に4つ
+        List of slice positions in z direction. 4 evenly spaced if None
     electrode_mask : np.ndarray, optional
-        電極マスク (nx, ny, nz)
+        Electrode mask (nx, ny, nz)
     save_path : str, optional
-        保存先のパス
+        Path to save file
     """
     if z_indices is None:
         nz = phi.shape[2]
@@ -121,7 +121,7 @@ def plot_multiple_slices(
         ax = axes[i]
         phi_slice = phi[:, :, z_idx]
 
-        # ポテンシャル分布
+        # Potential distribution
         im = ax.pcolormesh(
             x * 1e9,
             y * 1e9,
@@ -132,7 +132,7 @@ def plot_multiple_slices(
             vmax=vmax,
         )
 
-        # 電極位置
+        # Electrode positions
         if electrode_mask is not None:
             electrode_slice = electrode_mask[:, :, z_idx]
             if electrode_slice.any():
@@ -150,7 +150,7 @@ def plot_multiple_slices(
         ax.set_title(f"z={z[z_idx] * 1e9:.1f} nm")
         ax.set_aspect("equal")
 
-    # カラーバー（共通）
+    # Color bar (shared)
     fig.colorbar(im, ax=axes, label="Potential (V)", shrink=0.8)
 
     plt.tight_layout()
@@ -170,31 +170,31 @@ def plot_electrode_pattern(
     z_index: int = -1,
     save_path: Optional[str] = None,
 ) -> None:
-    """電極パターンを可視化
+    """Visualize electrode pattern
 
     Parameters
     ----------
     electrode_mask : np.ndarray
-        電極マスク (nx, ny, nz)
+        Electrode mask (nx, ny, nz)
     electrode_voltages : np.ndarray
-        電極電圧 (nx, ny, nz)
+        Electrode voltage (nx, ny, nz)
     x, y : np.ndarray
-        座標配列 (m)
+        Coordinate arrays (m)
     z_index : int
-        z方向のインデックス（デフォルトは表面）
+        Index in z direction (default is surface)
     save_path : str, optional
-        保存先のパス
+        Path to save file
     """
     fig, ax = plt.subplots(figsize=(8, 6))
 
-    # 電極マスクとデータのスライス
+    # Slice of electrode mask and data
     mask_slice = electrode_mask[:, :, z_index]
     voltage_slice = electrode_voltages[:, :, z_index].copy()
 
-    # 電極がない部分はNaNに
+    # Set non-electrode regions to NaN
     voltage_slice[~mask_slice] = np.nan
 
-    # プロット
+    # Plot
     im = ax.pcolormesh(
         x * 1e9, y * 1e9, voltage_slice.T, cmap="viridis", shading="auto"
     )
@@ -204,7 +204,7 @@ def plot_electrode_pattern(
     ax.set_title("Electrode Pattern and Voltages")
     ax.set_aspect("equal")
 
-    # カラーバー
+    # Color bar
     cbar = plt.colorbar(im, ax=ax)
     cbar.set_label("Voltage (V)")
 
@@ -221,14 +221,14 @@ def plot_convergence(
     residual_history: list,
     save_path: Optional[str] = None,
 ) -> None:
-    """収束履歴をプロット
+    """Plot convergence history
 
     Parameters
     ----------
     residual_history : list
-        残差の履歴
+        History of residuals
     save_path : str, optional
-        保存先のパス
+        Path to save file
     """
     fig, ax = plt.subplots(figsize=(8, 6))
 
@@ -257,18 +257,18 @@ def save_results(
     info: dict,
     save_path: str,
 ) -> None:
-    """計算結果をファイルに保存
+    """Save calculation results to file
 
     Parameters
     ----------
     phi : np.ndarray
-        ポテンシャル分布
+        Potential distribution
     x, y, z : np.ndarray
-        座標配列
+        Coordinate arrays
     info : dict
-        収束情報
+        Convergence information
     save_path : str
-        保存先のパス（.npz形式）
+        Path to save file (.npz format)
     """
     np.savez(
         save_path,
@@ -286,19 +286,19 @@ def save_results(
 def load_results(
     file_path: str,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, dict]:
-    """保存した結果を読み込み
+    """Load saved results
 
     Parameters
     ----------
     file_path : str
-        ファイルパス（.npz形式）
+        File path (.npz format)
 
     Returns
     -------
     phi, x, y, z : np.ndarray
-        ポテンシャル分布と座標
+        Potential distribution and coordinates
     info : dict
-        収束情報
+        Convergence information
     """
     data = np.load(file_path)
 
