@@ -57,6 +57,8 @@ class PoissonSolver:
         # Convergence history
         self.residual_history = []
 
+        self._precompute_z_interfaces()
+
     def solve(
         self,
         rho: Optional[np.ndarray] = None,
@@ -136,92 +138,61 @@ class PoissonSolver:
         }
         return phi, info
 
+    def _precompute_z_interfaces(self):
+        """Precompute harmonic mean of permittivity at z-direction interfaces
+
+        For heterostructure applications where permittivity is uniform in x,y
+        but varies in z direction. Detects interfaces where epsilon[k] != epsilon[k+1]
+        and precomputes harmonic mean values to avoid repeated calculations during iteration.
+
+        Stores results in self.eps_z_interfaces as:
+        {k: eps_interface} where eps_interface is harmonic mean between layer k and k+1
+        """
+        self.eps_z_interfaces = {}
+
+        for k in range(self.nz - 1):
+            eps_k = self.epsilon[k, 0, 0]
+            eps_kp = self.epsilon[k + 1, 0, 0]
+
+            if eps_k != eps_kp:
+                self.eps_z_interfaces[k] = 2 * eps_k * eps_kp / (eps_k + eps_kp)
+
     def _sor_iteration(self, phi: np.ndarray, rho: np.ndarray) -> np.ndarray:
         """Single iteration update using SOR method
 
         Uses finite difference formula for non-uniform permittivity
-        Harmonic mean is used for permittivity at interfaces
+        Harmonic mean is used for permittivity at z-direction interfaces only
+        For heterostructure: assumes permittivity is uniform in x,y directions
 
         New coordinate system: array shape (nz, nx, ny), loop order k (z) -> i (x) -> j (y)
         """
+        h2 = self.h**2
 
-        # Update only interior grid points (boundaries handled separately)
-        # z-axis is the outermost loop
         for k in range(1, self.nz - 1):
+            eps_k = self.epsilon[k, 0, 0]
+
+            eps_zp = self.eps_z_interfaces.get(k, eps_k)
+            eps_zm = self.eps_z_interfaces.get(k - 1, eps_k)
+
+            az = eps_zp / h2
+            bz = eps_zm / h2
+            axy = eps_k / h2
+
+            A = 4 * axy + az + bz
+
             for i in range(1, self.nx - 1):
                 for j in range(1, self.ny - 1):
-                    # Skip electrode region (fixed potential)
                     if self.electrode_mask is not None and self.electrode_mask[k, i, j]:
                         continue
 
-                    # Approximate permittivity at neighboring points with harmonic mean
-                    # epsilon_{i+1/2,j,k} = 2*epsilon_i*epsilon_{i+1} / (epsilon_i + epsilon_{i+1})
-                    eps_i = self.epsilon[k, i, j]
-                    eps_ip = self.epsilon[k, i + 1, j]
-                    eps_im = self.epsilon[k, i - 1, j]
-                    eps_jp = self.epsilon[k, i, j + 1]
-                    eps_jm = self.epsilon[k, i, j - 1]
-                    eps_kp = self.epsilon[k + 1, i, j]
-                    eps_km = self.epsilon[k - 1, i, j]
-
-                    eps_xp = (
-                        2 * eps_i * eps_ip / (eps_i + eps_ip)
-                        if (eps_i + eps_ip) > 0
-                        else 0
-                    )
-                    eps_xm = (
-                        2 * eps_i * eps_im / (eps_i + eps_im)
-                        if (eps_i + eps_im) > 0
-                        else 0
-                    )
-                    eps_yp = (
-                        2 * eps_i * eps_jp / (eps_i + eps_jp)
-                        if (eps_i + eps_jp) > 0
-                        else 0
-                    )
-                    eps_ym = (
-                        2 * eps_i * eps_jm / (eps_i + eps_jm)
-                        if (eps_i + eps_jm) > 0
-                        else 0
-                    )
-                    eps_zp = (
-                        2 * eps_i * eps_kp / (eps_i + eps_kp)
-                        if (eps_i + eps_kp) > 0
-                        else 0
-                    )
-                    eps_zm = (
-                        2 * eps_i * eps_km / (eps_i + eps_km)
-                        if (eps_i + eps_km) > 0
-                        else 0
-                    )
-
-                    # Compute coefficients (isotropic grid)
-                    h2 = self.h**2
-                    ax = eps_xp / h2
-                    bx = eps_xm / h2
-                    ay = eps_yp / h2
-                    by = eps_ym / h2
-                    az = eps_zp / h2
-                    bz = eps_zm / h2
-
-                    A = ax + bx + ay + by + az + bz
-
-                    # Compute right-hand side (array shape: (nz, nx, ny))
                     B = (
-                        ax * phi[k, i + 1, j]
-                        + bx * phi[k, i - 1, j]
-                        + ay * phi[k, i, j + 1]
-                        + by * phi[k, i, j - 1]
+                        axy * (phi[k, i + 1, j] + phi[k, i - 1, j] + phi[k, i, j + 1] + phi[k, i, j - 1])
                         + az * phi[k + 1, i, j]
                         + bz * phi[k - 1, i, j]
                         - rho[k, i, j] / self.epsilon_0
                     )
 
-                    # SOR update
-                    if A != 0:
-                        phi[k, i, j] = (1 - self.omega) * phi[k, i, j] + self.omega * (
-                            B / A
-                        )
+                    phi[k, i, j] = (1 - self.omega) * phi[k, i, j] + self.omega * (B / A)
 
         return phi
 
@@ -340,67 +311,27 @@ class PoissonSolver:
         """Compute residual
 
         Uses L2 norm
+        For heterostructure: assumes permittivity is uniform in x,y directions
 
         New coordinate system: array shape (nz, nx, ny), loop order k (z) -> i (x) -> j (y)
         """
         residual_array = np.zeros_like(phi)
+        h2 = self.h**2
 
-        # z-axis is the outermost loop
         for k in range(1, self.nz - 1):
+            eps_k = self.epsilon[k, 0, 0]
+
+            eps_zp = self.eps_z_interfaces.get(k, eps_k)
+            eps_zm = self.eps_z_interfaces.get(k - 1, eps_k)
+
             for i in range(1, self.nx - 1):
                 for j in range(1, self.ny - 1):
-                    # Compute Laplacian (using harmonic mean)
-                    eps_i = self.epsilon[k, i, j]
-                    eps_ip = self.epsilon[k, i + 1, j]
-                    eps_im = self.epsilon[k, i - 1, j]
-                    eps_jp = self.epsilon[k, i, j + 1]
-                    eps_jm = self.epsilon[k, i, j - 1]
-                    eps_kp = self.epsilon[k + 1, i, j]
-                    eps_km = self.epsilon[k - 1, i, j]
-
-                    eps_xp = (
-                        2 * eps_i * eps_ip / (eps_i + eps_ip)
-                        if (eps_i + eps_ip) > 0
-                        else 0
-                    )
-                    eps_xm = (
-                        2 * eps_i * eps_im / (eps_i + eps_im)
-                        if (eps_i + eps_im) > 0
-                        else 0
-                    )
-                    eps_yp = (
-                        2 * eps_i * eps_jp / (eps_i + eps_jp)
-                        if (eps_i + eps_jp) > 0
-                        else 0
-                    )
-                    eps_ym = (
-                        2 * eps_i * eps_jm / (eps_i + eps_jm)
-                        if (eps_i + eps_jm) > 0
-                        else 0
-                    )
-                    eps_zp = (
-                        2 * eps_i * eps_kp / (eps_i + eps_kp)
-                        if (eps_i + eps_kp) > 0
-                        else 0
-                    )
-                    eps_zm = (
-                        2 * eps_i * eps_km / (eps_i + eps_km)
-                        if (eps_i + eps_km) > 0
-                        else 0
-                    )
-
-                    # Computation for isotropic grid (array shape: (nz, nx, ny))
                     laplacian = (
-                        eps_xp * (phi[k, i + 1, j] - phi[k, i, j])
-                        - eps_xm * (phi[k, i, j] - phi[k, i - 1, j])
-                        + eps_yp * (phi[k, i, j + 1] - phi[k, i, j])
-                        - eps_ym * (phi[k, i, j] - phi[k, i, j - 1])
+                        eps_k * (phi[k, i + 1, j] + phi[k, i - 1, j] + phi[k, i, j + 1] + phi[k, i, j - 1] - 4 * phi[k, i, j])
                         + eps_zp * (phi[k + 1, i, j] - phi[k, i, j])
                         - eps_zm * (phi[k, i, j] - phi[k - 1, i, j])
-                    ) / self.h**2
+                    ) / h2
 
-                    # Poisson equation residual: -∇⋅(ε∇φ) - ρ/ε_0
                     residual_array[k, i, j] = -laplacian - rho[k, i, j] / self.epsilon_0
 
-        # L2 norm (isotropic grid)
-        return np.sqrt(np.mean(residual_array**2)) * self.h**2
+        return np.sqrt(np.mean(residual_array**2)) * h2
