@@ -67,8 +67,8 @@ class StructureManager:
         size = domain["size"]
         grid_spacing = domain["grid_spacing"]
 
-        self.size_x, self.size_y, self.size_z = size
-        self.h = grid_spacing
+        self.size_x, self.size_y, self.size_z = [float(s) for s in size]
+        self.h = float(grid_spacing)
 
         # Calculate number of grid points
         self.nx = int(self.size_x / self.h) + 1
