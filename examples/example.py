@@ -83,7 +83,7 @@ def main():
         electrode_voltages=manager.electrode_voltages,
         x=x,
         y=y,
-        z_index=-1,
+        z_index=0,
         save_path=str(figures_dir / "electrode_pattern.png"),
     )
 

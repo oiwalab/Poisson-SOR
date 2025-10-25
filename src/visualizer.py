@@ -167,7 +167,7 @@ def plot_electrode_pattern(
     electrode_voltages: np.ndarray,
     x: np.ndarray,
     y: np.ndarray,
-    z_index: int = -1,
+    z_index: int = 0,
     save_path: Optional[str] = None,
 ) -> None:
     """Visualize electrode pattern
