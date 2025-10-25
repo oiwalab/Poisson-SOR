@@ -192,7 +192,7 @@ class PoissonSolver:
                         axy * (phi[k, i + 1, j] + phi[k, i - 1, j] + phi[k, i, j + 1] + phi[k, i, j - 1])
                         + az * phi[k + 1, i, j]
                         + bz * phi[k - 1, i, j]
-                        - rho[k, i, j] / self.epsilon_0
+                        + rho[k, i, j] / self.epsilon_0
                     )
 
                     phi[k, i, j] = (1 - self.omega) * phi[k, i, j] + self.omega * (B / A)
@@ -335,6 +335,6 @@ class PoissonSolver:
                         - eps_zm * (phi[k, i, j] - phi[k - 1, i, j])
                     ) / h2
 
-                    residual_array[k, i, j] = -laplacian - rho[k, i, j] / self.epsilon_0
+                    residual_array[k, i, j] = -laplacian + rho[k, i, j] / self.epsilon_0
 
         return np.sqrt(np.mean(residual_array**2)) * h2

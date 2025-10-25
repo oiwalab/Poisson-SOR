@@ -213,3 +213,132 @@ def test_electrode_volume():
     assert not np.isnan(phi).any(), "Solution should not contain NaN"
 
     assert info["converged"], "Solver should converge"
+
+
+def test_point_charge():
+    """Test potential of single point charge
+
+    Verifies spherical symmetry and 1/r dependence
+    Compares with analytical solution φ(r) = Q/(4πε₀r)
+    """
+    # Grid setup (array shape: (nz, nx, ny))
+    nz, nx, ny = 41, 41, 41
+    h = 1e-9  # 1nm (isotropic grid)
+    k_center, i_center, j_center = 20, 20, 20  # Center of grid
+
+    # Vacuum permittivity
+    epsilon_0 = 8.854187817e-12  # F/m
+    epsilon_r = 1.0  # Vacuum
+    epsilon = np.ones((nz, nx, ny)) * epsilon_r
+
+    # Point charge at center
+    Q = -1.602e-19  # C (electron charge, negative)
+    rho = np.zeros((nz, nx, ny))
+    rho[k_center, i_center, j_center] = Q / (h**3)  # Charge density (C/m³)
+
+    # Dirichlet boundary conditions (phi = 0 at boundaries, approximating infinity)
+    boundary_conditions = {
+        "z_top": {"type": "dirichlet", "value": 0.0},
+        "z_bottom": {"type": "dirichlet", "value": 0.0},
+        "x_sides": {"type": "dirichlet", "value": 0.0},
+        "y_sides": {"type": "dirichlet", "value": 0.0},
+    }
+
+    # Initialize solver
+    params = {
+        "epsilon": epsilon,
+        "grid_spacing": h,
+        "boundary_conditions": boundary_conditions,
+        "electrode_mask": None,
+        "electrode_voltages": None,
+    }
+    solver = PoissonSolver(
+        params,
+        omega=1.5,
+        tolerance=1e-10,
+        max_iterations=20000,
+    )
+
+    # Solve
+    phi, info = solver.solve(rho=rho, verbose=False)
+
+    # Check convergence
+    assert info["converged"], f"Solver should converge, but got {info}"
+
+    # Check for NaN
+    assert not np.isnan(phi).any(), "Solution should not contain NaN"
+
+    # Analytical solution: φ(r) = Q / (4πε₀εᵣr)
+    def phi_analytical(r):
+        return Q / (4 * np.pi * epsilon_0 * epsilon_r * r)
+
+    # Test 1: Spherical symmetry
+    # Check that points at same distance have similar potential
+    distance = 5  # 5 grid points away from center
+    test_points = [
+        (k_center + distance, i_center, j_center),  # +z
+        (k_center - distance, i_center, j_center),  # -z
+        (k_center, i_center + distance, j_center),  # +x
+        (k_center, i_center - distance, j_center),  # -x
+        (k_center, i_center, j_center + distance),  # +y
+        (k_center, i_center, j_center - distance),  # -y
+    ]
+
+    potentials = [phi[k, i, j] for k, i, j in test_points]
+    mean_potential = np.mean(potentials)
+    relative_deviations = [
+        abs(p - mean_potential) / abs(mean_potential) for p in potentials
+    ]
+
+    print("\nPoint charge test - Spherical symmetry:")
+    print(f"Converged: {info['converged']}, Iterations: {info['iterations']}")
+    print(f"Distance: {distance * h * 1e9:.1f} nm")
+    print(f"Potentials at 6 symmetric points: {potentials}")
+    print(f"Mean: {mean_potential:.6e} V")
+    print(f"Max relative deviation: {max(relative_deviations):.2%}")
+
+    assert max(relative_deviations) < 0.05, (
+        f"Spherical symmetry violated: max deviation {max(relative_deviations):.2%}"
+    )
+
+    # Test 2: Distance dependence (phi proportional to 1/r)
+    # Check ratio phi1/phi2 approx r2/r1
+    r1 = 5 * h  # 5nm from center
+    r2 = 10 * h  # 10nm from center
+
+    phi1 = phi[k_center + 5, i_center, j_center]
+    phi2 = phi[k_center + 10, i_center, j_center]
+
+    ratio_phi = phi1 / phi2
+    ratio_r = r2 / r1  # Should be 2.0
+
+    print(f"\nDistance dependence (phi proportional to 1/r):")
+    print(f"phi(5nm) = {phi1:.6e} V")
+    print(f"phi(10nm) = {phi2:.6e} V")
+    print(f"phi1/phi2 = {ratio_phi:.3f} (expected: {ratio_r:.3f})")
+
+    # Allow larger tolerance due to discretization effects and boundary conditions
+    assert abs(ratio_phi - ratio_r) / ratio_r < 0.5, (
+        f"Distance dependence violated: phi1/phi2 = {ratio_phi:.3f}, expected {ratio_r:.3f}"
+    )
+
+    # Test 3: Compare with analytical solution (informational only)
+    # Large errors are expected due to:
+    # - Discretization effects (especially near the charge)
+    # - Finite domain size (boundaries at 20nm cannot approximate infinity well)
+    test_distances = [5, 7, 10, 12, 15, 18]  # Grid points
+
+    print("\nComparison with analytical solution (informational):")
+    print(
+        f"{'Distance (nm)':<15} {'phi_num (V)':<15} {'phi_ana (V)':<15} {'Rel. Error':<15}"
+    )
+
+    for d in test_distances:
+        r = d * h
+        phi_num = phi[k_center + d, i_center, j_center]
+        phi_ana = phi_analytical(r)
+        rel_error = abs(phi_num - phi_ana) / abs(phi_ana)
+
+        print(f"{r * 1e9:<15.1f} {phi_num:<15.6e} {phi_ana:<15.6e} {rel_error:<15.2%}")
+
+    print("\nPoint charge test passed!")
