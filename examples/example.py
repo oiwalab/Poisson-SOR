@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 
 # srcディレクトリをパスに追加
-sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from structure_manager import StructureManager
 from poisson_solver import PoissonSolver
@@ -22,7 +22,7 @@ def main():
     print("=" * 60)
 
     # 設定ファイルのパス
-    config_path = Path(__file__).parent.parent / 'configs' / 'example.yaml'
+    config_path = Path(__file__).parent.parent / "configs" / "example.yaml"
 
     # 構造管理クラスの初期化と設定読み込み
     print("\n[1] 構造定義を読み込み中...")
@@ -33,7 +33,7 @@ def main():
 
     # ソルバの初期化
     print("\n[2] ソルバを初期化中...")
-    solver = PoissonSolver(manager.params)
+    solver = PoissonSolver(manager.params, max_iterations=1000)
 
     print(f"  Grid size: ({manager.nx}, {manager.ny}, {manager.nz})")
     print(f"  Omega: {solver.omega}")
@@ -58,9 +58,9 @@ def main():
 
     # 結果の保存
     print("\n[5] 結果を保存中...")
-    results_dir = Path(__file__).parent.parent / 'results'
+    results_dir = Path(__file__).parent.parent / "results"
     results_dir.mkdir(exist_ok=True)
-    figures_dir = results_dir / 'figures'
+    figures_dir = results_dir / "figures"
     figures_dir.mkdir(exist_ok=True)
 
     # npz形式で保存
@@ -70,7 +70,7 @@ def main():
         y=y,
         z=z,
         info=info,
-        save_path=str(results_dir / 'potential_distribution.npz')
+        save_path=str(results_dir / "potential_distribution.npz"),
     )
 
     # 可視化
@@ -84,7 +84,7 @@ def main():
         x=x,
         y=y,
         z_index=-1,
-        save_path=str(figures_dir / 'electrode_pattern.png')
+        save_path=str(figures_dir / "electrode_pattern.png"),
     )
 
     # 複数のz位置でのポテンシャル分布
@@ -98,14 +98,14 @@ def main():
         z=z,
         z_indices=z_indices,
         electrode_mask=manager.electrode_mask,
-        save_path=str(figures_dir / 'potential_slices.png')
+        save_path=str(figures_dir / "potential_slices.png"),
     )
 
     # 収束履歴
     print("  - 収束履歴")
     vis.plot_convergence(
         residual_history=solver.residual_history,
-        save_path=str(figures_dir / 'convergence_history.png')
+        save_path=str(figures_dir / "convergence_history.png"),
     )
 
     # 特定の深さでの詳細プロット
@@ -118,8 +118,8 @@ def main():
         z=z,
         z_index=interface_z_index,
         electrode_mask=manager.electrode_mask,
-        save_path=str(figures_dir / 'potential_at_interface.png'),
-        title='Potential at Si/SiO2 Interface'
+        save_path=str(figures_dir / "potential_at_interface.png"),
+        title="Potential at Si/SiO2 Interface",
     )
 
     print("\n" + "=" * 60)
@@ -128,5 +128,5 @@ def main():
     print("=" * 60)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

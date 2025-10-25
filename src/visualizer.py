@@ -25,23 +25,23 @@ def plot_potential_slice(
     Parameters
     ----------
     phi : np.ndarray
-        Potential distribution (nx, ny, nz)
+        Potential distribution (nz, nx, ny)
     x, y, z : np.ndarray
         Coordinate arrays (m)
     z_index : int, optional
         Slice position in z direction (index). Center if None
     electrode_mask : np.ndarray, optional
-        Electrode mask (nx, ny, nz)
+        Electrode mask (nz, nx, ny)
     save_path : str, optional
         Path to save file
     title : str
         Graph title
     """
     if z_index is None:
-        z_index = phi.shape[2] // 2
+        z_index = phi.shape[0] // 2
 
     # Get slice
-    phi_slice = phi[:, :, z_index]
+    phi_slice = phi[z_index, :, :]
 
     # Plot
     fig, ax = plt.subplots(figsize=(8, 6))
@@ -51,7 +51,7 @@ def plot_potential_slice(
 
     # Overlay electrode positions
     if electrode_mask is not None:
-        electrode_slice = electrode_mask[:, :, z_index]
+        electrode_slice = electrode_mask[z_index, :, :]
         if electrode_slice.any():
             ax.contour(
                 x * 1e9,
@@ -94,18 +94,18 @@ def plot_multiple_slices(
     Parameters
     ----------
     phi : np.ndarray
-        Potential distribution (nx, ny, nz)
+        Potential distribution (nz, nx, ny)
     x, y, z : np.ndarray
         Coordinate arrays (m)
     z_indices : list, optional
         List of slice positions in z direction. 4 evenly spaced if None
     electrode_mask : np.ndarray, optional
-        Electrode mask (nx, ny, nz)
+        Electrode mask (nz, nx, ny)
     save_path : str, optional
         Path to save file
     """
     if z_indices is None:
-        nz = phi.shape[2]
+        nz = phi.shape[0]
         z_indices = [nz // 4, nz // 2, 3 * nz // 4, -1]
 
     n_slices = len(z_indices)
@@ -119,7 +119,7 @@ def plot_multiple_slices(
 
     for i, z_idx in enumerate(z_indices):
         ax = axes[i]
-        phi_slice = phi[:, :, z_idx]
+        phi_slice = phi[z_idx, :, :]
 
         # Potential distribution
         im = ax.pcolormesh(
@@ -134,7 +134,7 @@ def plot_multiple_slices(
 
         # Electrode positions
         if electrode_mask is not None:
-            electrode_slice = electrode_mask[:, :, z_idx]
+            electrode_slice = electrode_mask[z_idx, :, :]
             if electrode_slice.any():
                 ax.contour(
                     x * 1e9,
@@ -175,9 +175,9 @@ def plot_electrode_pattern(
     Parameters
     ----------
     electrode_mask : np.ndarray
-        Electrode mask (nx, ny, nz)
+        Electrode mask (nz, nx, ny)
     electrode_voltages : np.ndarray
-        Electrode voltage (nx, ny, nz)
+        Electrode voltage (nz, nx, ny)
     x, y : np.ndarray
         Coordinate arrays (m)
     z_index : int
@@ -188,8 +188,8 @@ def plot_electrode_pattern(
     fig, ax = plt.subplots(figsize=(8, 6))
 
     # Slice of electrode mask and data
-    mask_slice = electrode_mask[:, :, z_index]
-    voltage_slice = electrode_voltages[:, :, z_index].copy()
+    mask_slice = electrode_mask[z_index, :, :]
+    voltage_slice = electrode_voltages[z_index, :, :].copy()
 
     # Set non-electrode regions to NaN
     voltage_slice[~mask_slice] = np.nan
