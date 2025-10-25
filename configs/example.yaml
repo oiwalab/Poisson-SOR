@@ -8,9 +8,9 @@
 # Structure:
 # z = 0nm: Surface (electrodes)
 # ---------------
-# SiO2 (0nm → -10nm)
+# SiO2 (0nm to -10nm)
 # ---------------
-# Si  (-10nm → -50nm)
+# Si  (-10nm to -50nm)
 # ---------------
 
 # Computational domain

@@ -55,7 +55,7 @@ class StructureManager:
         yaml_path : str
             Path to YAML configuration file
         """
-        with open(yaml_path, "r") as f:
+        with open(yaml_path, "r", encoding="utf-8") as f:
             self.config = yaml.safe_load(f)
 
         # Extract settings
