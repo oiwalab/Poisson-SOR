@@ -50,7 +50,7 @@ def main():
     print("\n[4] 計算結果:")
     print(f"  収束: {info['converged']}")
     print(f"  反復回数: {info['iterations']}")
-    print(f"  最終残差: {info['final_residual']:.2e}")
+    print(f"  最終φ変化: {info['final_phi_change']:.2e}")
     print(f"  ポテンシャル範囲: [{phi.min():.4f}, {phi.max():.4f}] V")
 
     # 座標取得
@@ -104,7 +104,7 @@ def main():
     # 収束履歴
     print("  - 収束履歴")
     vis.plot_convergence(
-        residual_history=solver.residual_history,
+        convergence_history=solver.convergence_history,
         save_path=str(figures_dir / "convergence_history.png"),
     )
 

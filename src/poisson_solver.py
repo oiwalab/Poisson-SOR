@@ -51,8 +51,8 @@ class PoissonSolver:
         # Vacuum permittivity (F/m)
         self.epsilon_0 = 8.854187817e-12
 
-        # Convergence history
-        self.residual_history = []
+        # Convergence history (stores phi difference between iterations)
+        self.convergence_history = []
 
         self._precompute_z_interfaces()
 
@@ -77,7 +77,7 @@ class PoissonSolver:
         phi : np.ndarray
             Potential distribution (V), shape=(nz, nx, ny)
         info : Dict
-            Convergence information (iterations, final residual, etc.)
+            Convergence information (iterations, final phi change, etc.)
         """
         # Initialize charge density
         if rho is None:
@@ -89,7 +89,7 @@ class PoissonSolver:
         else:
             phi = phi_initial.copy()
 
-        self.residual_history = []
+        self.convergence_history = []
 
         # Set electrode potential (fixed values)
         if self.electrode_mask is not None and self.electrode_voltages is not None:
@@ -97,6 +97,9 @@ class PoissonSolver:
 
         # Apply initial boundary conditions
         phi = self.apply_boundary_conditions(phi)
+
+        # Store previous phi for convergence check
+        phi_prev = phi.copy()
 
         # SOR iteration
         for iteration in range(self.max_iterations):
@@ -106,32 +109,35 @@ class PoissonSolver:
             # Reapply boundary conditions (for safety)
             phi = self.apply_boundary_conditions(phi)
 
-            # Compute residual
-            residual = self.compute_residual(phi, rho)
-            self.residual_history.append(residual)
+            # Compute maximum change in phi
+            phi_diff = np.max(np.abs(phi - phi_prev))
+            self.convergence_history.append(phi_diff)
 
             if verbose:
                 if (iteration + 1) % 100 == 0:
                     print("=" * 40)
                 if (iteration + 1) % 10 == 0:
-                    print(f"Iteration {iteration + 1}: Residual = {residual:.6e}")
+                    print(f"Iteration {iteration + 1}: Max Δφ = {phi_diff:.6e}")
 
             # Check convergence
-            if residual < self.tolerance:
+            if phi_diff < self.tolerance:
                 info = {
                     "converged": True,
                     "iterations": iteration + 1,
-                    "final_residual": residual,
+                    "final_phi_change": phi_diff,
                 }
                 return phi, info
-            if np.isnan(residual) or np.isinf(residual):
-                raise ValueError("Residual became NaN or Inf, diverging solution.")
+            if np.isnan(phi_diff) or np.isinf(phi_diff):
+                raise ValueError("Phi change became NaN or Inf, diverging solution.")
+
+            # Update phi_prev for next iteration
+            phi_prev = phi.copy()
 
         # Reached maximum iterations
         info = {
             "converged": False,
             "iterations": self.max_iterations,
-            "final_residual": residual,
+            "final_phi_change": phi_diff,
         }
         return phi, info
 

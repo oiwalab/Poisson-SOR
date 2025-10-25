@@ -218,25 +218,35 @@ def plot_electrode_pattern(
 
 
 def plot_convergence(
-    residual_history: list,
+    convergence_history: list = None,
+    residual_history: list = None,
     save_path: Optional[str] = None,
 ) -> None:
     """Plot convergence history
 
     Parameters
     ----------
-    residual_history : list
-        History of residuals
+    convergence_history : list, optional
+        History of phi changes (preferred)
+    residual_history : list, optional
+        History of residuals (deprecated, for backward compatibility)
     save_path : str, optional
         Path to save file
     """
+    # Handle backward compatibility
+    if convergence_history is None and residual_history is None:
+        raise ValueError("Either convergence_history or residual_history must be provided")
+
+    history = convergence_history if convergence_history is not None else residual_history
+    ylabel = "Max |Δφ| (V)" if convergence_history is not None else "Residual (L2 norm)"
+
     fig, ax = plt.subplots(figsize=(8, 6))
 
-    iterations = range(1, len(residual_history) + 1)
-    ax.semilogy(iterations, residual_history, "b-", linewidth=2)
+    iterations = range(1, len(history) + 1)
+    ax.semilogy(iterations, history, "b-", linewidth=2)
 
     ax.set_xlabel("Iteration")
-    ax.set_ylabel("Residual (L2 norm)")
+    ax.set_ylabel(ylabel)
     ax.set_title("Convergence History")
     ax.grid(True, alpha=0.3)
 
