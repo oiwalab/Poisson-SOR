@@ -65,11 +65,6 @@ electrodes:
     z_position: -5e-9             # Electrode bottom position
     voltage: -0.5
 
-solver:
-  omega: 1.5                      # SOR relaxation parameter
-  max_iterations: 10000
-  tolerance: 1e-6
-
 boundary_conditions:
   z_top:
     type: "neumann"
@@ -95,16 +90,15 @@ import visualizer as vis
 # Load structure from YAML
 manager = StructureManager("configs/example.yaml")
 
-# Initialize solver
+# Initialize solver (using default parameters)
+solver = PoissonSolver(manager.params)
+
+# Or customize solver parameters
 solver = PoissonSolver(
-    epsilon=manager.epsilon_array,
-    grid_spacing=manager.h,
-    boundary_conditions=manager.config['boundary_conditions'],
-    omega=1.5,
-    tolerance=1e-6,
-    max_iterations=10000,
-    electrode_mask=manager.electrode_mask,
-    electrode_voltages=manager.electrode_voltages,
+    manager.params,
+    omega=1.2,           # Override default omega=1.8
+    tolerance=1e-8,      # Override default tolerance=1e-6
+    max_iterations=20000 # Override default max_iterations=10000
 )
 
 # Solve Poisson equation

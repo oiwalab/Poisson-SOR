@@ -26,35 +26,19 @@ def main():
 
     # 構造管理クラスの初期化と設定読み込み
     print("\n[1] 構造定義を読み込み中...")
-    manager = StructureManager()
-    manager.load_from_yaml(str(config_path))
+    manager = StructureManager(str(config_path))
 
     # 構造の要約を表示
     print(manager.get_summary())
 
-    # ソルバパラメータの取得
-    solver_config = manager.config.get('solver', {})
-    omega = solver_config.get('omega', 1.5)
-    max_iterations = solver_config.get('max_iterations', 10000)
-    tolerance = solver_config.get('tolerance', 1e-6)
-
     # ソルバの初期化
     print("\n[2] ソルバを初期化中...")
-    solver = PoissonSolver(
-        epsilon=manager.epsilon_array,
-        grid_spacing=(manager.dx, manager.dy, manager.dz),
-        boundary_conditions=manager.config.get('boundary_conditions', {}),
-        omega=omega,
-        tolerance=tolerance,
-        max_iterations=max_iterations,
-        electrode_mask=manager.electrode_mask,
-        electrode_voltages=manager.electrode_voltages,
-    )
+    solver = PoissonSolver(manager.params)
 
     print(f"  Grid size: ({manager.nx}, {manager.ny}, {manager.nz})")
-    print(f"  Omega: {omega}")
-    print(f"  Tolerance: {tolerance:.2e}")
-    print(f"  Max iterations: {max_iterations}")
+    print(f"  Omega: {solver.omega}")
+    print(f"  Tolerance: {solver.tolerance:.2e}")
+    print(f"  Max iterations: {solver.max_iterations}")
 
     # ポアソン方程式を解く
     print("\n[3] ポアソン方程式を解いています...")
@@ -126,7 +110,7 @@ def main():
 
     # 特定の深さでの詳細プロット
     print("  - Si/SiO2界面付近のポテンシャル分布")
-    interface_z_index = int(40e-9 / manager.dz)  # Si/SiO2界面
+    interface_z_index = int(10e-9 / manager.h)  # Si/SiO2界面 (z=-10nm)
     vis.plot_potential_slice(
         phi=phi,
         x=x,

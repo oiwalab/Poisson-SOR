@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(uv run pytest tests/test_structure_manager.py::test_load_from_actual_yaml_file -v)",
+      "Bash(uv run pytest tests/ -v)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

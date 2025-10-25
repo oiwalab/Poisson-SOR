@@ -14,42 +14,39 @@ class PoissonSolver:
 
     Parameters
     ----------
-    epsilon : np.ndarray
-        Permittivity distribution (nz, nx, ny)
-    grid_spacing : float
-        Grid spacing h (m) - only isotropic grids supported (dx = dy = dz = h)
-    boundary_conditions : Dict
-        Boundary condition settings
-    omega : float
-        SOR relaxation parameter (1 < omega < 2)
-    tolerance : float
-        Convergence threshold
-    max_iterations : int
-        Maximum number of iterations
+    params : Dict
+        Dictionary containing:
+        - epsilon: np.ndarray - Permittivity distribution (nz, nx, ny)
+        - grid_spacing: float - Grid spacing h (m)
+        - boundary_conditions: Dict - Boundary condition settings
+        - electrode_mask: Optional[np.ndarray] - Electrode mask
+        - electrode_voltages: Optional[np.ndarray] - Electrode voltages
+    omega : float, optional
+        SOR relaxation parameter (1 < omega < 2), default=1.8
+    tolerance : float, optional
+        Convergence threshold, default=1e-6
+    max_iterations : int, optional
+        Maximum number of iterations, default=10000
     """
 
     def __init__(
         self,
-        epsilon: np.ndarray,
-        grid_spacing: float,
-        boundary_conditions: Dict,
+        params: Dict,
         omega: float = 1.8,
         tolerance: float = 1e-6,
         max_iterations: int = 10000,
-        electrode_mask: Optional[np.ndarray] = None,
-        electrode_voltages: Optional[np.ndarray] = None,
     ):
-        self.epsilon = epsilon
-        self.nz, self.nx, self.ny = epsilon.shape  # Array shape: (nz, nx, ny)
-        self.h = grid_spacing  # Isotropic grid spacing
-        self.boundary_conditions = boundary_conditions
+        self.epsilon = params["epsilon"]
+        self.nz, self.nx, self.ny = self.epsilon.shape  # Array shape: (nz, nx, ny)
+        self.h = params["grid_spacing"]  # Isotropic grid spacing
+        self.boundary_conditions = params["boundary_conditions"]
         self.omega = omega
         self.tolerance = tolerance
         self.max_iterations = max_iterations
 
         # Electrode mask and voltages
-        self.electrode_mask = electrode_mask
-        self.electrode_voltages = electrode_voltages
+        self.electrode_mask = params.get("electrode_mask")
+        self.electrode_voltages = params.get("electrode_voltages")
 
         # Vacuum permittivity (F/m)
         self.epsilon_0 = 8.854187817e-12

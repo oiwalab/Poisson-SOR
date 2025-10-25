@@ -54,12 +54,6 @@ electrodes:
     z_position: -5e-9        # Electrode bottom at z=-5nm
     voltage: -0.5            # -0.5V
 
-# SOR parameters
-solver:
-  omega: 1.5               # Relaxation parameter (1 < omega < 2, smaller for stability)
-  max_iterations: 10000    # Maximum iterations
-  tolerance: 1e-6          # Convergence tolerance threshold
-
 # Boundary conditions
 boundary_conditions:
   z_top:

@@ -20,6 +20,7 @@ class StructureManager:
         self.config: Dict = {}
         self.layers: List[Dict] = []
         self.electrodes: List[Dict] = []
+        self.boundary_conditions: Dict = {}
 
         # Computational grid
         self.nx: int = 0
@@ -58,17 +59,18 @@ class StructureManager:
         with open(yaml_path, "r", encoding="utf-8") as f:
             self.config = yaml.safe_load(f)
 
-        # Extract settings
-        self.layers = self.config.get("layers", [])
-        self.electrodes = self.config.get("electrodes", [])
+        # Extract settings and convert string numbers to float
+        self.layers = self._convert_to_numeric(self.config.get("layers", []))
+        self.electrodes = self._convert_to_numeric(self.config.get("electrodes", []))
+        self.boundary_conditions = self._convert_to_numeric(self.config.get("boundary_conditions", {}))
+        domain = self._convert_to_numeric(self.config.get("domain", {}))
 
         # Set computational domain
-        domain = self.config.get("domain", {})
         size = domain["size"]
         grid_spacing = domain["grid_spacing"]
 
-        self.size_x, self.size_y, self.size_z = [float(s) for s in size]
-        self.h = float(grid_spacing)
+        self.size_x, self.size_y, self.size_z = size
+        self.h = grid_spacing
 
         # Calculate number of grid points
         self.nx = int(self.size_x / self.h) + 1
@@ -89,6 +91,34 @@ class StructureManager:
             self.generate_electrode_mask()
             self.get_electrode_voltages()
             self.check_electrode_overlap()
+
+    def _convert_to_numeric(self, obj):
+        """Recursively convert string numbers to float in nested structures
+
+        Converts all numeric strings to float in dictionaries and lists.
+        Handles nested structures recursively.
+
+        Parameters
+        ----------
+        obj : any
+            Object to convert (can be dict, list, str, or any other type)
+
+        Returns
+        -------
+        converted : any
+            Object with numeric strings converted to float
+        """
+        if isinstance(obj, dict):
+            return {k: self._convert_to_numeric(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [self._convert_to_numeric(item) for item in obj]
+        elif isinstance(obj, str):
+            try:
+                return float(obj)
+            except ValueError:
+                return obj
+        else:
+            return obj
 
     def _initialize_arrays(self) -> None:
         """Initialize internal arrays
@@ -461,3 +491,25 @@ class StructureManager:
             summary.append(f"  {i + 1}. {name}: V={voltage:.3f} V, shape={shape}")
 
         return "\n".join(summary)
+
+    @property
+    def params(self) -> Dict:
+        """Parameters for PoissonSolver initialization
+
+        Returns
+        -------
+        params : Dict
+            Dictionary containing required parameters for PoissonSolver:
+            - epsilon: Permittivity distribution (nz, nx, ny)
+            - grid_spacing: Grid spacing h (m)
+            - boundary_conditions: Boundary condition settings
+            - electrode_mask: Electrode mask (nz, nx, ny)
+            - electrode_voltages: Electrode voltages (nz, nx, ny)
+        """
+        return {
+            "epsilon": self.epsilon_array,
+            "grid_spacing": self.h,
+            "boundary_conditions": self.boundary_conditions,
+            "electrode_mask": self.electrode_mask,
+            "electrode_voltages": self.electrode_voltages,
+        }
