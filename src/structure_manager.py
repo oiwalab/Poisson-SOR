@@ -16,7 +16,7 @@ class StructureManager:
     generates permittivity distribution, electrode mask, and voltage distribution
     """
 
-    def __init__(self):
+    def __init__(self, config_path: Optional[str] = None):
         self.config: Dict = {}
         self.layers: List[Dict] = []
         self.electrodes: List[Dict] = []
@@ -44,6 +44,9 @@ class StructureManager:
         # Charge density (nx, ny, nz)
         self.charge_density: Optional[np.ndarray] = None
 
+        if config_path is not None:
+            self.load_from_yaml(config_path)
+
     def load_from_yaml(self, yaml_path: str) -> None:
         """Load structure definition from YAML file
 
@@ -61,11 +64,11 @@ class StructureManager:
 
         # Set computational domain
         domain = self.config.get("domain", {})
-        size = domain.get("size", [100e-9, 100e-9, 100e-9])
-        grid_spacing = domain.get("grid_spacing", 10e-9)
+        size = domain["size"]
+        grid_spacing = domain["grid_spacing"]
 
         self.size_x, self.size_y, self.size_z = size
-        self.h = grid_spacing  # Isotropic grid spacing
+        self.h = grid_spacing
 
         # Calculate number of grid points
         self.nx = int(self.size_x / self.h) + 1
@@ -116,7 +119,9 @@ class StructureManager:
             return
 
         # Sort in descending order by z_range[0] (z_max) (from surface to bottom)
-        sorted_layers = sorted(self.layers, key=lambda x: x.get("z_range", [0, 0])[0], reverse=True)
+        sorted_layers = sorted(
+            self.layers, key=lambda x: x.get("z_range", [0, 0])[0], reverse=True
+        )
 
         # Computational domain range
         domain_z_top = 0.0  # Surface
@@ -286,7 +291,9 @@ class StructureManager:
 
         # Set mask (array shape: (nz, nx, ny))
         # Electrode region: from k_top to k_bottom
-        self.electrode_mask[k_top : k_bottom + 1, i_min : i_max + 1, j_min : j_max + 1] = True
+        self.electrode_mask[
+            k_top : k_bottom + 1, i_min : i_max + 1, j_min : j_max + 1
+        ] = True
 
     def get_electrode_voltages(self) -> np.ndarray:
         """Get electrode voltage distribution
@@ -310,7 +317,9 @@ class StructureManager:
             if shape == "rectangle":
                 x_range = electrode.get("x_range", [0, 0])
                 y_range = electrode.get("y_range", [0, 0])
-                z_position = electrode.get("z_position", 0)  # Electrode bottom (negative value)
+                z_position = electrode.get(
+                    "z_position", 0
+                )  # Electrode bottom (negative value)
 
                 # Convert to indices
                 i_min = int(x_range[0] / self.h)
@@ -331,9 +340,9 @@ class StructureManager:
                 k_bottom = max(0, min(k_bottom, self.nz - 1))
 
                 # Set voltage (array shape: (nz, nx, ny))
-                self.electrode_voltages[k_top : k_bottom + 1, i_min : i_max + 1, j_min : j_max + 1] = (
-                    voltage
-                )
+                self.electrode_voltages[
+                    k_top : k_bottom + 1, i_min : i_max + 1, j_min : j_max + 1
+                ] = voltage
 
         return self.electrode_voltages
 
@@ -356,7 +365,9 @@ class StructureManager:
             if shape == "rectangle":
                 x_range = electrode.get("x_range", [0, 0])
                 y_range = electrode.get("y_range", [0, 0])
-                z_position = electrode.get("z_position", 0)  # Electrode bottom (negative value)
+                z_position = electrode.get(
+                    "z_position", 0
+                )  # Electrode bottom (negative value)
 
                 # Convert to indices
                 i_min = int(x_range[0] / self.h)
