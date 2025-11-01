@@ -16,23 +16,22 @@ import visualizer as vis
 
 
 def main():
-    """メイン実行関数"""
     print("=" * 60)
-    print("SOR法による3次元ポアソン方程式ソルバ")
+    print("Poisson Solver Example using SOR Method")
     print("=" * 60)
 
     # 設定ファイルのパス
     config_path = Path(__file__).parent.parent / "configs" / "example.yaml"
 
     # 構造管理クラスの初期化と設定読み込み
-    print("\n[1] 構造定義を読み込み中...")
+    print("\n[1] Loading structure definition...")
     manager = StructureManager(str(config_path))
 
     # 構造の要約を表示
     print(manager.get_summary())
 
     # ソルバの初期化
-    print("\n[2] ソルバを初期化中...")
+    print("\n[2] Initializing solver...")
     solver = PoissonSolver(manager.params, max_iterations=1000)
 
     print(f"  Grid size: ({manager.nx}, {manager.ny}, {manager.nz})")
@@ -41,23 +40,22 @@ def main():
     print(f"  Max iterations: {solver.max_iterations}")
 
     # ポアソン方程式を解く
-    print("\n[3] ポアソン方程式を解いています...")
-    print("  (電荷密度ρ=0の場合)")
+    print("\n[3] Solving Poisson equation...")
 
     phi, info = solver.solve(rho=manager.charge_density)
 
     # 結果の表示
-    print("\n[4] 計算結果:")
-    print(f"  収束: {info['converged']}")
-    print(f"  反復回数: {info['iterations']}")
-    print(f"  最終φ変化: {info['final_phi_change']:.2e}")
-    print(f"  ポテンシャル範囲: [{phi.min():.4f}, {phi.max():.4f}] V")
+    print("\n[4] Calculation results:")
+    print(f"  Converged: {info['converged']}")
+    print(f"  Iterations: {info['iterations']}")
+    print(f"  Final φ change: {info['final_phi_change']:.2e}")
+    print(f"  Potential range: [{phi.min():.4f}, {phi.max():.4f}] V")
 
     # 座標取得
     x, y, z = manager.get_grid_coordinates()
 
     # 結果の保存
-    print("\n[5] 結果を保存中...")
+    print("\n[5] Saving results...")
     results_dir = Path(__file__).parent.parent / "results"
     results_dir.mkdir(exist_ok=True)
     figures_dir = results_dir / "figures"
@@ -74,10 +72,10 @@ def main():
     )
 
     # 可視化
-    print("\n[6] 結果を可視化中...")
+    print("\n[6] Visualizing results...")
 
-    # 電極パターン
-    print("  - 電極パターン")
+    # Electrode pattern
+    print("  - Electrode pattern")
     vis.plot_electrode_pattern(
         electrode_mask=manager.electrode_mask,
         electrode_voltages=manager.electrode_voltages,
@@ -87,8 +85,8 @@ def main():
         save_path=str(figures_dir / "electrode_pattern.png"),
     )
 
-    # 複数のz位置でのポテンシャル分布
-    print("  - ポテンシャル分布（複数スライス）")
+    # Potential distribution (multiple slices)
+    print("  - Potential distribution (multiple slices)")
     nz = manager.nz
     z_indices = [nz // 4, nz // 2, 3 * nz // 4, -1]
     vis.plot_multiple_slices(
@@ -101,16 +99,16 @@ def main():
         save_path=str(figures_dir / "potential_slices.png"),
     )
 
-    # 収束履歴
-    print("  - 収束履歴")
+    # Convergence history
+    print("  - Convergence history")
     vis.plot_convergence(
         convergence_history=solver.convergence_history,
         save_path=str(figures_dir / "convergence_history.png"),
     )
 
-    # 特定の深さでの詳細プロット
-    print("  - Si/SiO2界面付近のポテンシャル分布")
-    interface_z_index = int(10e-9 / manager.h)  # Si/SiO2界面 (z=-10nm)
+    # Potential at Si/SiO2 interface
+    print("  - Potential at Si/SiO2 Interface")
+    interface_z_index = int(10e-9 / manager.h)  # Si/SiO2 interface (z=-10nm)
     vis.plot_potential_slice(
         phi=phi,
         x=x,
@@ -123,8 +121,8 @@ def main():
     )
 
     print("\n" + "=" * 60)
-    print("計算完了！")
-    print(f"結果は {results_dir} に保存されました。")
+    print("All tasks completed.")
+    print(f"The results are saved in {results_dir}.")
     print("=" * 60)
 
 

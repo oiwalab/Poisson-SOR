@@ -15,18 +15,18 @@
 
 # Computational domain
 domain:
-  size: [100e-9, 100e-9, 50e-9]  # [x, y, z] in meters (100nm x 100nm x 50nm)
-  grid_spacing: 5e-9  # h in meters (5nm, isotropic grid)
+  size: [100e-9, 100e-9, 100e-9]  # [x, y, z] in meters (100nm x 100nm x 100nm)
+  grid_spacing: 1e-9  # h in meters (1nm, isotropic grid)
 
 # Material layer structure
 # z_range format: [z_max, z_min] where z_max > z_min
 layers:
   - material: "SiO2"
-    z_range: [0, -10e-9]  # 0nm → -10nm: Silicon oxide layer (surface side)
+    z_range: [0, -20e-9]  # 0nm → -10nm: Silicon oxide layer (surface side)
     epsilon_r: 3.9
 
   - material: "Si"
-    z_range: [-10e-9, -50e-9]  # -10nm → -50nm: Silicon substrate (bottom side)
+    z_range: [-20e-9, -100e-9]  # -10nm → -100nm: Silicon substrate (bottom side)
     epsilon_r: 11.7
 
 # Electrode structure (multiple finger gates)
@@ -61,13 +61,13 @@ boundary_conditions:
     value: 0.0                       # dphi/dz = 0
 
   z_bottom:
-    type: "neumann"
+    type: "dirichlet"                # Dirichlet boundary condition
     value: 0.0                       # dphi/dz = 0
 
   x_sides:
-    type: "neumann"                  # or "periodic"
+    type: "periodic"                  # or "neumann"
     value: 0.0
 
   y_sides:
-    type: "neumann"                  # or "periodic"
+    type: "periodic"                  # or "neumann"
     value: 0.0
