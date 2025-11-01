@@ -1,0 +1,51 @@
+# Profiling configuration for Poisson solver
+# Simplified structure for performance analysis
+
+# Computational domain
+domain:
+  size: [50e-9, 50e-9, 50e-9]  # [x, y, z] in meters (50nm x 50nm x 50nm)
+  grid_spacing: 1e-9  # h in meters (1nm, isotropic grid)
+
+# Material layer structure
+layers:
+  - material: "SiO2"
+    z_range: [0, -10e-9]
+    epsilon_r: 3.9
+
+  - material: "Si"
+    z_range: [-10e-9, -50e-9]
+    epsilon_r: 11.7
+
+# Simple electrode structure for profiling
+electrodes:
+  - name: "gate_1"
+    shape: "rectangle"
+    x_range: [10e-9, 20e-9]
+    y_range: [10e-9, 40e-9]
+    z_position: -5e-9
+    voltage: -1.0
+
+  - name: "gate_2"
+    shape: "rectangle"
+    x_range: [30e-9, 40e-9]
+    y_range: [10e-9, 40e-9]
+    z_position: -5e-9
+    voltage: -0.5
+
+# Boundary conditions
+boundary_conditions:
+  z_top:
+    type: "neumann"
+    value: 0.0
+
+  z_bottom:
+    type: "dirichlet"
+    value: 0.0
+
+  x_sides:
+    type: "periodic"
+    value: 0.0
+
+  y_sides:
+    type: "periodic"
+    value: 0.0

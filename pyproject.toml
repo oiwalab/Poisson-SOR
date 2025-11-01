@@ -16,4 +16,5 @@ dependencies = [
 dev = [
     "ruff>=0.14.1",
     "scalene>=1.5.0",
+    "snakeviz>=2.2.2",
 ]
