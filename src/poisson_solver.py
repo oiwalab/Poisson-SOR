@@ -5,6 +5,7 @@ Solves Poisson equation -∇⋅(ε∇φ)=ρ for systems with non-uniform permitt
 
 import numpy as np
 from typing import Dict, Optional, Tuple
+from numba import njit
 
 
 class PoissonSolver:
@@ -103,10 +104,9 @@ class PoissonSolver:
 
         # SOR iteration
         for iteration in range(self.max_iterations):
-            # SOR update (interior points only, boundaries not updated)
             phi = self._sor_iteration(phi, rho)
 
-            # Reapply boundary conditions (for safety)
+            # Reapply boundary conditions
             phi = self.apply_boundary_conditions(phi)
 
             # Compute maximum change in phi
@@ -114,9 +114,9 @@ class PoissonSolver:
             self.convergence_history.append(phi_diff)
 
             if verbose:
-                if (iteration + 1) % 100 == 0:
+                if (iteration + 1) % 1000 == 0:
                     print("=" * 40)
-                if (iteration + 1) % 10 == 0:
+                if (iteration + 1) % 100 == 0:
                     print(f"Iteration {iteration + 1}: Max Δφ = {phi_diff:.6e}")
 
             # Check convergence
@@ -150,15 +150,23 @@ class PoissonSolver:
 
         Stores results in self.eps_z_interfaces as:
         {k: eps_interface} where eps_interface is harmonic mean between layer k and k+1
+
+        Also creates self.eps_z_array (nz-1,) for JIT function:
+        eps_z_array[k] is harmonic mean between layer k and k+1
         """
         self.eps_z_interfaces = {}
+        self.eps_z_array = np.zeros(self.nz - 1)
 
         for k in range(self.nz - 1):
             eps_k = self.epsilon[k, 0, 0]
             eps_kp = self.epsilon[k + 1, 0, 0]
 
             if eps_k != eps_kp:
-                self.eps_z_interfaces[k] = 2 * eps_k * eps_kp / (eps_k + eps_kp)
+                eps_harmonic = 2 * eps_k * eps_kp / (eps_k + eps_kp)
+                self.eps_z_interfaces[k] = eps_harmonic
+                self.eps_z_array[k] = eps_harmonic
+            else:
+                self.eps_z_array[k] = eps_k
 
     def _sor_iteration(self, phi: np.ndarray, rho: np.ndarray) -> np.ndarray:
         """Single iteration update using SOR method
@@ -169,35 +177,26 @@ class PoissonSolver:
 
         New coordinate system: array shape (nz, nx, ny), loop order k (z) -> i (x) -> j (y)
         """
-        h2 = self.h**2
+        # Prepare electrode mask for JIT function
+        if self.electrode_mask is None:
+            electrode_mask = np.zeros((self.nz, self.nx, self.ny), dtype=np.bool_)
+        else:
+            electrode_mask = self.electrode_mask
 
-        for k in range(1, self.nz - 1):
-            eps_k = self.epsilon[k, 0, 0]
-
-            eps_zp = self.eps_z_interfaces.get(k, eps_k)
-            eps_zm = self.eps_z_interfaces.get(k - 1, eps_k)
-
-            az = eps_zp / h2
-            bz = eps_zm / h2
-            axy = eps_k / h2
-
-            A = 4 * axy + az + bz
-
-            for i in range(1, self.nx - 1):
-                for j in range(1, self.ny - 1):
-                    if self.electrode_mask is not None and self.electrode_mask[k, i, j]:
-                        continue
-
-                    B = (
-                        axy * (phi[k, i + 1, j] + phi[k, i - 1, j] + phi[k, i, j + 1] + phi[k, i, j - 1])
-                        + az * phi[k + 1, i, j]
-                        + bz * phi[k - 1, i, j]
-                        + rho[k, i, j] / self.epsilon_0
-                    )
-
-                    phi[k, i, j] = (1 - self.omega) * phi[k, i, j] + self.omega * (B / A)
-
-        return phi
+        # Call JIT-compiled function
+        return _sor_iteration_jit(
+            phi,
+            rho,
+            self.epsilon,
+            self.eps_z_array,
+            electrode_mask,
+            self.h,
+            self.omega,
+            self.epsilon_0,
+            self.nz,
+            self.nx,
+            self.ny,
+        )
 
     def apply_boundary_conditions(self, phi: np.ndarray) -> np.ndarray:
         """Apply boundary conditions
@@ -330,7 +329,14 @@ class PoissonSolver:
             for i in range(1, self.nx - 1):
                 for j in range(1, self.ny - 1):
                     laplacian = (
-                        eps_k * (phi[k, i + 1, j] + phi[k, i - 1, j] + phi[k, i, j + 1] + phi[k, i, j - 1] - 4 * phi[k, i, j])
+                        eps_k
+                        * (
+                            phi[k, i + 1, j]
+                            + phi[k, i - 1, j]
+                            + phi[k, i, j + 1]
+                            + phi[k, i, j - 1]
+                            - 4 * phi[k, i, j]
+                        )
                         + eps_zp * (phi[k + 1, i, j] - phi[k, i, j])
                         - eps_zm * (phi[k, i, j] - phi[k - 1, i, j])
                     ) / h2
@@ -338,3 +344,83 @@ class PoissonSolver:
                     residual_array[k, i, j] = -laplacian + rho[k, i, j] / self.epsilon_0
 
         return np.sqrt(np.mean(residual_array**2)) * h2
+
+
+@njit
+def _sor_iteration_jit(
+    phi: np.ndarray,
+    rho: np.ndarray,
+    epsilon: np.ndarray,
+    eps_z_array: np.ndarray,
+    electrode_mask: np.ndarray,
+    h: float,
+    omega: float,
+    epsilon_0: float,
+    nz: int,
+    nx: int,
+    ny: int,
+) -> np.ndarray:
+    """JIT-compiled SOR iteration core computation
+
+    Parameters
+    ----------
+    phi : np.ndarray
+        Potential distribution (nz, nx, ny)
+    rho : np.ndarray
+        Charge density distribution (nz, nx, ny)
+    epsilon : np.ndarray
+        Permittivity distribution (nz, nx, ny)
+    eps_z_array : np.ndarray
+        Harmonic mean at z-interfaces, shape (nz-1,)
+        eps_z_array[k] is harmonic mean between layer k and k+1
+    electrode_mask : np.ndarray
+        Electrode mask (nz, nx, ny), True where electrodes exist
+    h : float
+        Grid spacing
+    omega : float
+        SOR relaxation parameter
+    epsilon_0 : float
+        Vacuum permittivity
+    nz, nx, ny : int
+        Grid dimensions
+
+    Returns
+    -------
+    phi : np.ndarray
+        Updated potential distribution
+    """
+    h2 = h * h
+
+    for k in range(1, nz - 1):
+        eps_k = epsilon[k, 0, 0]
+
+        eps_zp = eps_z_array[k]
+        eps_zm = eps_z_array[k - 1]
+
+        az = eps_zp / h2
+        bz = eps_zm / h2
+        axy = eps_k / h2
+
+        A = 4 * axy + az + bz
+
+        for i in range(1, nx - 1):
+            for j in range(1, ny - 1):
+                if electrode_mask[k, i, j]:
+                    continue
+
+                B = (
+                    axy
+                    * (
+                        phi[k, i + 1, j]
+                        + phi[k, i - 1, j]
+                        + phi[k, i, j + 1]
+                        + phi[k, i, j - 1]
+                    )
+                    + az * phi[k + 1, i, j]
+                    + bz * phi[k - 1, i, j]
+                    + rho[k, i, j] / epsilon_0
+                )
+
+                phi[k, i, j] = (1 - omega) * phi[k, i, j] + omega * (B / A)
+
+    return phi
