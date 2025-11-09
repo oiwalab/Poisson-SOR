@@ -23,11 +23,9 @@ domain:
 layers:
   - material: "SiO2"
     z_range: [0, -20e-9]  # 0nm → -10nm: Silicon oxide layer (surface side)
-    epsilon_r: 3.9
 
   - material: "Si"
     z_range: [-20e-9, -100e-9]  # -10nm → -100nm: Silicon substrate (bottom side)
-    epsilon_r: 11.7
 
 # Electrode structure (multiple finger gates)
 # z_position: electrode bottom position (negative value)

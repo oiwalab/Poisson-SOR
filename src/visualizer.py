@@ -324,3 +324,99 @@ def load_results(
     }
 
     return phi, x, y, z, info
+
+
+def plot_band_diagram_1d(
+    result,
+    x_idx: Optional[int] = None,
+    y_idx: Optional[int] = None,
+    save_path: Optional[str] = None,
+) -> None:
+    """Plot 1D band diagram along z-direction
+
+    Parameters
+    ----------
+    result : SolverResult
+        Solver result containing potential and material information
+    x_idx : int, optional
+        Index in x-direction (default: center)
+    y_idx : int, optional
+        Index in y-direction (default: center)
+    save_path : str, optional
+        Path to save file
+
+    Notes
+    -----
+    Plots:
+    - Ec(z): Conduction band edge (solid blue line)
+    - Ev(z): Valence band edge (solid red line)
+    - -φ(z): Fermi level shift (dashed black line)
+    - Material boundaries: vertical gray lines
+    """
+    # Extract 1D band diagram data
+    z, Ec, Ev, phi = result.get_band_diagram_1d(x_idx=x_idx, y_idx=y_idx)
+
+    # Convert z to nm for plotting
+    z_nm = z * 1e9
+
+    # Create figure
+    fig, ax = plt.subplots(figsize=(10, 6))
+
+    # Plot band edges
+    ax.plot(z_nm, Ec, "b-", linewidth=2, label="$E_c$ (conduction band)")
+    ax.plot(z_nm, Ev, "r-", linewidth=2, label="$E_v$ (valence band)")
+
+    # Plot -φ (Fermi level shift)
+    ax.plot(z_nm, -phi, "k--", linewidth=1.5, label=r"$-\phi$ (Fermi shift)")
+
+    # Mark material boundaries
+    if result.materials is not None:
+        # Find where material changes
+        material_names = [mat.name for mat in result.materials]
+        for k in range(1, len(material_names)):
+            if material_names[k] != material_names[k - 1]:
+                z_boundary = z_nm[k]
+                ax.axvline(
+                    z_boundary,
+                    color="gray",
+                    linestyle=":",
+                    linewidth=1,
+                    alpha=0.7,
+                )
+
+        # Add material labels at the top
+        current_material = material_names[0]
+        start_idx = 0
+        for k in range(1, len(material_names) + 1):
+            if k == len(material_names) or material_names[k] != current_material:
+                # Add label at middle of region
+                mid_idx = (start_idx + k - 1) // 2
+                z_label = z_nm[mid_idx]
+                y_label = ax.get_ylim()[1] * 0.95  # Near top of plot
+                ax.text(
+                    z_label,
+                    y_label,
+                    current_material,
+                    ha="center",
+                    va="top",
+                    fontsize=10,
+                    bbox=dict(boxstyle="round,pad=0.3", facecolor="wheat", alpha=0.5),
+                )
+                if k < len(material_names):
+                    current_material = material_names[k]
+                    start_idx = k
+
+    # Labels and formatting
+    ax.set_xlabel("z position (nm)")
+    ax.set_ylabel("Energy (eV)")
+    ax.set_title("1D Band Diagram (z-direction)")
+    ax.legend(loc="best")
+    ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, dpi=150)
+        print(f"Saved: {save_path}")
+
+    plt.show()

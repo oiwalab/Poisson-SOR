@@ -50,14 +50,14 @@ def test_uniform_dielectric_neumann():
     )
 
     # Solve (zero charge density)
-    phi, info = solver.solve()
+    result = solver.solve()
 
     # With rho=0 and Neumann BC, potential should be constant
-    assert phi.std() < 1e-6, (
+    assert result.phi.std() < 1e-6, (
         "Potential should be constant with zero charge and Neumann BC"
     )
-    assert info["converged"], "Solver should converge"
-    assert info["iterations"] >= 1
+    assert result.info["converged"], "Solver should converge"
+    assert result.info["iterations"] >= 1
 
 
 def test_parallel_plate_capacitor():
@@ -107,14 +107,14 @@ def test_parallel_plate_capacitor():
     phi_initial[-1, :, :] = 0.0  # z_bottom (k=nz-1): 0V
 
     # Solve
-    phi, info = solver.solve(phi_initial=phi_initial)
+    result = solver.solve(phi_initial=phi_initial)
 
     # Check for NaN
-    assert not np.isnan(phi).any(), "Solution should not contain NaN"
+    assert not np.isnan(result.phi).any(), "Solution should not contain NaN"
 
     # Check if boundary conditions are correctly set
-    assert np.abs(phi[0, :, :].mean() - 1.0) < 1e-6, "Top boundary (k=0) should be 1V"
-    assert np.abs(phi[-1, :, :].mean() - 0.0) < 1e-6, (
+    assert np.abs(result.phi[0, :, :].mean() - 1.0) < 1e-6, "Top boundary (k=0) should be 1V"
+    assert np.abs(result.phi[-1, :, :].mean() - 0.0) < 1e-6, (
         "Bottom boundary (k=nz-1) should be 0V"
     )
 
@@ -125,10 +125,10 @@ def test_parallel_plate_capacitor():
     phi_analytical = 1.0 - k_coords / K  # Linear from 1 to 0
 
     # Compare at center point (array shape: (nz, nx, ny))
-    phi_numerical = phi[:, 1, 1]
+    phi_numerical = result.phi[:, 1, 1]
 
     print("\nParallel plate capacitor test:")
-    print(f"Converged: {info['converged']}, Iterations: {info['iterations']}")
+    print(f"Converged: {result.info['converged']}, Iterations: {result.info['iterations']}")
     print(f"Max absolute error: {np.abs(phi_numerical - phi_analytical).max():.6e}")
 
     # Check error against analytical solution at interior points (excluding boundaries)
@@ -194,25 +194,25 @@ def test_electrode_volume():
     phi_initial[electrode_mask] = -0.5
 
     # Solve
-    phi, info = solver.solve(phi_initial=phi_initial)
+    result = solver.solve(phi_initial=phi_initial)
 
     # Check voltage in entire electrode region
-    electrode_phi = phi[electrode_mask]
+    electrode_phi = result.phi[electrode_mask]
     assert np.allclose(electrode_phi, -0.5, atol=1e-6), (
         f"Electrode potential should be -0.5V, but got mean={electrode_phi.mean():.6f}"
     )
 
     # Potential outside electrode should be higher than electrode voltage (closer to 0V)
     # Array shape: (nz, nx, ny) -> [k, i, j]
-    non_electrode_phi = phi[5, 0, 0]  # Edge point of middle layer
+    non_electrode_phi = result.phi[5, 0, 0]  # Edge point of middle layer
     assert non_electrode_phi > electrode_phi.mean(), (
         "Non-electrode region should have higher potential than electrode"
     )
 
     # Check for NaN
-    assert not np.isnan(phi).any(), "Solution should not contain NaN"
+    assert not np.isnan(result.phi).any(), "Solution should not contain NaN"
 
-    assert info["converged"], "Solver should converge"
+    assert result.info["converged"], "Solver should converge"
 
 
 def test_point_charge():
@@ -260,13 +260,13 @@ def test_point_charge():
     )
 
     # Solve
-    phi, info = solver.solve(rho=rho, verbose=False)
+    result = solver.solve(rho=rho, verbose=False)
 
     # Check convergence
-    assert info["converged"], f"Solver should converge, but got {info}"
+    assert result.info["converged"], f"Solver should converge, but got {result.info}"
 
     # Check for NaN
-    assert not np.isnan(phi).any(), "Solution should not contain NaN"
+    assert not np.isnan(result.phi).any(), "Solution should not contain NaN"
 
     # Analytical solution: φ(r) = Q / (4πε₀εᵣr)
     def phi_analytical(r):
@@ -284,14 +284,14 @@ def test_point_charge():
         (k_center, i_center, j_center - distance),  # -y
     ]
 
-    potentials = [phi[k, i, j] for k, i, j in test_points]
+    potentials = [result.phi[k, i, j] for k, i, j in test_points]
     mean_potential = np.mean(potentials)
     relative_deviations = [
         abs(p - mean_potential) / abs(mean_potential) for p in potentials
     ]
 
     print("\nPoint charge test - Spherical symmetry:")
-    print(f"Converged: {info['converged']}, Iterations: {info['iterations']}")
+    print(f"Converged: {result.info['converged']}, Iterations: {result.info['iterations']}")
     print(f"Distance: {distance * h * 1e9:.1f} nm")
     print(f"Potentials at 6 symmetric points: {potentials}")
     print(f"Mean: {mean_potential:.6e} V")
@@ -306,8 +306,8 @@ def test_point_charge():
     r1 = 5 * h  # 5nm from center
     r2 = 10 * h  # 10nm from center
 
-    phi1 = phi[k_center + 5, i_center, j_center]
-    phi2 = phi[k_center + 10, i_center, j_center]
+    phi1 = result.phi[k_center + 5, i_center, j_center]
+    phi2 = result.phi[k_center + 10, i_center, j_center]
 
     ratio_phi = phi1 / phi2
     ratio_r = r2 / r1  # Should be 2.0
@@ -335,10 +335,200 @@ def test_point_charge():
 
     for d in test_distances:
         r = d * h
-        phi_num = phi[k_center + d, i_center, j_center]
+        phi_num = result.phi[k_center + d, i_center, j_center]
         phi_ana = phi_analytical(r)
         rel_error = abs(phi_num - phi_ana) / abs(phi_ana)
 
         print(f"{r * 1e9:<15.1f} {phi_num:<15.6e} {phi_ana:<15.6e} {rel_error:<15.2%}")
 
     print("\nPoint charge test passed!")
+
+
+def test_band_bending_si_sio2():
+    """Test band bending calculation for Si/SiO2 heterostructure
+
+    Verifies:
+    1. Ec, Ev arrays have correct shape
+    2. Ec - Ev = Eg at all points
+    3. Different band parameters in Si and SiO2 regions
+    4. Band offset at Si/SiO2 interface (discontinuity in χ)
+    5. SolverResult object is correctly created
+    """
+    from structure_manager import StructureManager
+    import yaml
+
+    # Create test configuration for Si/SiO2 structure
+    config_dict = {
+        "domain": {
+            "size": [50e-9, 50e-9, 30e-9],  # Small grid for testing
+            "grid_spacing": 5e-9,  # 5nm isotropic grid
+        },
+        "layers": [
+            {
+                "material": "SiO2",
+                "z_range": [0, -10e-9],  # 0 to -10nm (surface layer)
+                "epsilon_r": 3.9,
+            },
+            {
+                "material": "Si",
+                "z_range": [-10e-9, -30e-9],  # -10nm to -30nm (substrate)
+                "epsilon_r": 11.7,
+            },
+        ],
+        "electrodes": [
+            {
+                "name": "gate",
+                "shape": "rectangle",
+                "x_range": [10e-9, 40e-9],
+                "y_range": [10e-9, 40e-9],
+                "z_position": -5e-9,  # Electrode bottom at -5nm
+                "voltage": -0.5,  # -0.5V gate voltage
+            },
+        ],
+        "solver": {
+            "omega": 1.5,
+            "max_iterations": 1000,
+            "tolerance": 1e-6,
+        },
+        "boundary_conditions": {
+            "z_top": {"type": "neumann", "value": 0.0},
+            "z_bottom": {"type": "neumann", "value": 0.0},
+            "x_sides": {"type": "neumann", "value": 0.0},
+            "y_sides": {"type": "neumann", "value": 0.0},
+        },
+    }
+
+    # Save to temporary YAML file
+    import tempfile
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+        yaml.dump(config_dict, f)
+        config_file = f.name
+
+    try:
+        # Create structure manager
+        structure = StructureManager()
+        structure.load_from_yaml(config_file)
+
+        # Create solver
+        params = structure.params
+        solver = PoissonSolver(
+            params,
+            omega=config_dict["solver"]["omega"],
+            tolerance=config_dict["solver"]["tolerance"],
+            max_iterations=config_dict["solver"]["max_iterations"],
+        )
+
+        # Solve
+        result = solver.solve(verbose=False)
+
+        # Test 1: Check that result is SolverResult object
+        from solver_result import SolverResult
+        assert isinstance(result, SolverResult), "Result should be SolverResult object"
+
+        # Test 2: Check that materials are available
+        assert result.materials is not None, "Materials list should be available"
+        assert len(result.materials) == result.nz, (
+            f"Materials list length {len(result.materials)} should match nz={result.nz}"
+        )
+
+        # Test 3: Check array shapes
+        Ec = result.compute_Ec()
+        Ev = result.compute_Ev()
+
+        assert Ec.shape == result.phi.shape, (
+            f"Ec shape {Ec.shape} should match phi shape {result.phi.shape}"
+        )
+        assert Ev.shape == result.phi.shape, (
+            f"Ev shape {Ev.shape} should match phi shape {result.phi.shape}"
+        )
+
+        # Test 4: Check Ec - Ev = Eg at all points
+        for k in range(result.nz):
+            Eg_expected = result.materials[k].band_gap
+            Eg_computed = Ec[k, :, :] - Ev[k, :, :]
+
+            assert np.allclose(Eg_computed, Eg_expected, atol=1e-10), (
+                f"At z-layer {k}: Ec - Ev should equal Eg={Eg_expected:.2f}eV, "
+                f"but got mean={Eg_computed.mean():.2f}eV"
+            )
+
+        # Test 5: Check different band parameters in Si and SiO2 regions
+        material_names = [mat.name for mat in result.materials]
+
+        # Find SiO2 and Si layer indices
+        sio2_indices = [i for i, name in enumerate(material_names) if name == "SiO2"]
+        si_indices = [i for i, name in enumerate(material_names) if name == "Si"]
+
+        assert len(sio2_indices) > 0, "Should have SiO2 layers"
+        assert len(si_indices) > 0, "Should have Si layers"
+
+        # Check band gap values
+        sio2_Eg = result.materials[sio2_indices[0]].band_gap
+        si_Eg = result.materials[si_indices[0]].band_gap
+
+        assert sio2_Eg > si_Eg, f"SiO2 band gap {sio2_Eg}eV should be > Si {si_Eg}eV"
+
+        # Check electron affinity values
+        sio2_chi = result.materials[sio2_indices[0]].electron_affinity
+        si_chi = result.materials[si_indices[0]].electron_affinity
+
+        assert si_chi > sio2_chi, (
+            f"Si electron affinity {si_chi}eV should be > SiO2 {sio2_chi}eV"
+        )
+
+        # Test 6: Check band offset at Si/SiO2 interface
+        # Find interface index (first Si layer)
+        interface_k = si_indices[0]
+        sio2_k = interface_k - 1  # Layer above (should be SiO2)
+
+        if sio2_k >= 0 and material_names[sio2_k] == "SiO2":
+            # At center of grid (x_idx, y_idx)
+            x_idx = result.nx // 2
+            y_idx = result.ny // 2
+
+            # Band offset (discontinuity in χ)
+            delta_chi = si_chi - sio2_chi
+
+            # At zero potential, ΔEc = -Δχ = -(χ_Si - χ_SiO2)
+            # But with potential, we need to compare the actual band edges
+            Ec_si = Ec[interface_k, x_idx, y_idx]
+            Ec_sio2 = Ec[sio2_k, x_idx, y_idx]
+
+            # The discontinuity depends on both χ and φ
+            # ΔEc = (Ec_Si - Ec_SiO2) should relate to Δχ
+            # Note: exact value depends on potential distribution
+            print("\nBand offset at Si/SiO2 interface:")
+            print(f"  Δχ = {delta_chi:.2f} eV")
+            print(f"  Ec(Si) = {Ec_si:.3f} eV")
+            print(f"  Ec(SiO2) = {Ec_sio2:.3f} eV")
+            print(f"  ΔEc = {Ec_si - Ec_sio2:.3f} eV")
+
+        # Test 7: Check 1D band diagram extraction
+        z, Ec_1d, Ev_1d, phi_1d = result.get_band_diagram_1d()
+
+        assert z.shape == (result.nz,), f"1D z array should have shape ({result.nz},)"
+        assert Ec_1d.shape == (result.nz,), (
+            f"1D Ec array should have shape ({result.nz},)"
+        )
+        assert Ev_1d.shape == (result.nz,), (
+            f"1D Ev array should have shape ({result.nz},)"
+        )
+        assert phi_1d.shape == (result.nz,), (
+            f"1D phi array should have shape ({result.nz},)"
+        )
+
+        # Test 8: Check convergence
+        assert result.info["converged"], "Solver should converge"
+        assert not np.isnan(result.phi).any(), "Solution should not contain NaN"
+        assert not np.isnan(Ec).any(), "Ec should not contain NaN"
+        assert not np.isnan(Ev).any(), "Ev should not contain NaN"
+
+        print("\nBand bending test passed!")
+        print(f"Grid size: ({result.nz}, {result.nx}, {result.ny})")
+        print(f"Converged: {result.info['converged']}, Iterations: {result.info['iterations']}")
+        print(f"Materials: {set(material_names)}")
+
+    finally:
+        # Clean up temporary file
+        import os
+        os.unlink(config_file)

@@ -4,8 +4,9 @@ Solves Poisson equation -∇⋅(ε∇φ)=ρ for systems with non-uniform permitt
 """
 
 import numpy as np
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional
 from numba import njit
+from solver_result import SolverResult
 
 
 class PoissonSolver:
@@ -49,6 +50,9 @@ class PoissonSolver:
         self.electrode_mask = params.get("electrode_mask")
         self.electrode_voltages = params.get("electrode_voltages")
 
+        # Materials list (one per z-layer)
+        self.materials_list = params.get("materials_list")
+
         # Vacuum permittivity (F/m)
         self.epsilon_0 = 8.854187817e-12
 
@@ -62,7 +66,7 @@ class PoissonSolver:
         rho: Optional[np.ndarray] = None,
         phi_initial: Optional[np.ndarray] = None,
         verbose: bool = True,
-    ) -> Tuple[np.ndarray, Dict]:
+    ) -> SolverResult:
         """Solve the Poisson equation
 
         Parameters
@@ -72,13 +76,13 @@ class PoissonSolver:
             Treated as zero if None
         phi_initial : np.ndarray, optional
             Initial potential distribution (V)
+        verbose : bool, optional
+            Print convergence progress (default: True)
 
         Returns
         -------
-        phi : np.ndarray
-            Potential distribution (V), shape=(nz, nx, ny)
-        info : Dict
-            Convergence information (iterations, final phi change, etc.)
+        result : SolverResult
+            SolverResult object containing phi, coordinates, materials, and convergence info
         """
         # Initialize charge density
         if rho is None:
@@ -126,7 +130,7 @@ class PoissonSolver:
                     "iterations": iteration + 1,
                     "final_phi_change": phi_diff,
                 }
-                return phi, info
+                return self._create_solver_result(phi, info)
             if np.isnan(phi_diff) or np.isinf(phi_diff):
                 raise ValueError("Phi change became NaN or Inf, diverging solution.")
 
@@ -139,7 +143,39 @@ class PoissonSolver:
             "iterations": self.max_iterations,
             "final_phi_change": phi_diff,
         }
-        return phi, info
+        return self._create_solver_result(phi, info)
+
+    def _create_solver_result(self, phi: np.ndarray, info: Dict) -> SolverResult:
+        """Create SolverResult object from solution
+
+        Parameters
+        ----------
+        phi : np.ndarray
+            Potential distribution (V), shape=(nz, nx, ny)
+        info : Dict
+            Convergence information
+
+        Returns
+        -------
+        result : SolverResult
+            SolverResult object with phi, coordinates, materials, and info
+        """
+        # Generate coordinate arrays
+        x = np.arange(self.nx) * self.h
+        y = np.arange(self.ny) * self.h
+        z = -np.arange(self.nz) * self.h  # z = -k * h (negative direction)
+
+        # Create SolverResult
+        result = SolverResult(
+            phi=phi,
+            x=x,
+            y=y,
+            z=z,
+            materials=self.materials_list,
+            info=info,
+        )
+
+        return result
 
     def _precompute_z_interfaces(self):
         """Precompute harmonic mean of permittivity at z-direction interfaces
