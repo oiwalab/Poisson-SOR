@@ -5,7 +5,6 @@ YAML設定ファイルから構造を読み込み、ポアソン方程式を解�
 
 import sys
 from pathlib import Path
-import numpy as np
 
 # srcディレクトリをパスに追加
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -42,17 +41,14 @@ def main():
     # ポアソン方程式を解く
     print("\n[3] Solving Poisson equation...")
 
-    phi, info = solver.solve(rho=manager.charge_density)
+    result = solver.solve(rho=manager.charge_density)
 
     # 結果の表示
     print("\n[4] Calculation results:")
-    print(f"  Converged: {info['converged']}")
-    print(f"  Iterations: {info['iterations']}")
-    print(f"  Final φ change: {info['final_phi_change']:.2e}")
-    print(f"  Potential range: [{phi.min():.4f}, {phi.max():.4f}] V")
-
-    # 座標取得
-    x, y, z = manager.get_grid_coordinates()
+    print(f"  Converged: {result.info['converged']}")
+    print(f"  Iterations: {result.info['iterations']}")
+    print(f"  Final φ change: {result.info['final_phi_change']:.2e}")
+    print(f"  Potential range: [{result.phi.min():.4f}, {result.phi.max():.4f}] V")
 
     # 結果の保存
     print("\n[5] Saving results...")
@@ -61,15 +57,8 @@ def main():
     figures_dir = results_dir / "figures"
     figures_dir.mkdir(exist_ok=True)
 
-    # npz形式で保存
-    vis.save_results(
-        phi=phi,
-        x=x,
-        y=y,
-        z=z,
-        info=info,
-        save_path=str(results_dir / "potential_distribution.npz"),
-    )
+    # SolverResult形式で保存
+    result.save(str(results_dir / "band_bending_result.npz"))
 
     # 可視化
     print("\n[6] Visualizing results...")
@@ -79,8 +68,8 @@ def main():
     vis.plot_electrode_pattern(
         electrode_mask=manager.electrode_mask,
         electrode_voltages=manager.electrode_voltages,
-        x=x,
-        y=y,
+        x=result.x,
+        y=result.y,
         z_index=0,
         save_path=str(figures_dir / "electrode_pattern.png"),
     )
@@ -90,10 +79,10 @@ def main():
     nz = manager.nz
     z_indices = [nz // 4, nz // 2, 3 * nz // 4, -1]
     vis.plot_multiple_slices(
-        phi=phi,
-        x=x,
-        y=y,
-        z=z,
+        phi=result.phi,
+        x=result.x,
+        y=result.y,
+        z=result.z,
         z_indices=z_indices,
         electrode_mask=manager.electrode_mask,
         save_path=str(figures_dir / "potential_slices.png"),
@@ -110,15 +99,25 @@ def main():
     print("  - Potential at Si/SiO2 Interface")
     interface_z_index = int(10e-9 / manager.h)  # Si/SiO2 interface (z=-10nm)
     vis.plot_potential_slice(
-        phi=phi,
-        x=x,
-        y=y,
-        z=z,
+        phi=result.phi,
+        x=result.x,
+        y=result.y,
+        z=result.z,
         z_index=interface_z_index,
         electrode_mask=manager.electrode_mask,
         save_path=str(figures_dir / "potential_at_interface.png"),
         title="Potential at Si/SiO2 Interface",
     )
+
+    # Band diagram (1D, z-direction at center)
+    if result.materials is not None:
+        print("  - Band diagram (1D, z-direction)")
+        vis.plot_band_diagram_1d(
+            result=result,
+            x_idx=None,  # Use center
+            y_idx=None,  # Use center
+            save_path=str(figures_dir / "band_diagram_1d.png"),
+        )
 
     print("\n" + "=" * 60)
     print("All tasks completed.")

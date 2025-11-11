@@ -1,7 +1,13 @@
-# SOR法による2次元半導体ポアソンソルバの実装計画
+# SOR法による3D半導体ポアソンソルバの実装計画
 
 ## 概要
-半導体ヘテロ構造と電極構造から2DEGのポテンシャルを計算するSOR法ベースのポアソンソルバを実装します。
+半導体ヘテロ構造と電極構造から電位分布とバンド構造を計算するSOR法ベースのポアソンソルバを実装します。
+
+**主な機能:**
+1. 3D静電ポテンシャル計算（SOR法）
+2. **ヘテロ構造バンド曲がり計算** ← NEW (Phase 1実装中)
+3. 複雑な電極構造のサポート
+4. 柔軟な境界条件設定
 
 ## 重要な制限事項
 
@@ -48,28 +54,34 @@
 SOR/
 ├── docs/                            # ドキュメント
 │   ├── implementation_plan.md       # 実装計画書（このファイル）
-│   └── CLAUDE.md                    # その他のドキュメント
+│   └── optimization_plan.md         # 最適化計画
 │
 ├── src/                             # ソースコード
 │   ├── poisson_solver.py            # メインのSORソルバクラス
 │   ├── structure_manager.py         # 半導体構造管理クラス
+│   ├── materials.py                 # 材料データベース ← NEW
+│   ├── solver_result.py             # 計算結果コンテナ ← NEW
 │   └── visualizer.py                # 可視化モジュール
 │
 ├── configs/                         # 設定ファイル
-│   └── example.yaml                 # 設定ファイルの例（フィンガーゲート構造）
+│   └── example.yaml                 # 設定ファイルの例（Si/SiO2フィンガーゲート）
 │
 ├── tests/                           # テストコード
-│   └── test_solver.py               # テストケース
+│   ├── test_solver.py               # ソルバテスト
+│   ├── test_structure_manager.py    # 構造マネージャテスト
+│   └── test_materials.py            # 材料データベーステスト ← NEW
 │
 ├── examples/                        # 実行例
-│   └── main.py                      # 実行スクリプト例
+│   └── example.py                   # 実行スクリプト例
 │
 └── results/                         # 結果保存用ディレクトリ（実行時に自動作成）
-    ├── potential_*.npz              # ポテンシャル分布データ
+    ├── potential_distribution.npz   # ポテンシャル分布データ
+    ├── band_bending_result.npz      # バンド構造計算結果 ← NEW
     └── figures/                     # 可視化結果の画像
-        ├── potential_slice_*.png    # ポテンシャル分布のスライス画像
+        ├── potential_slices.png     # ポテンシャル分布のスライス画像
         ├── electrode_pattern.png    # 電極パターンの可視化
-        └── convergence.png          # 収束履歴のグラフ
+        ├── convergence_history.png  # 収束履歴のグラフ
+        └── band_diagram_1d.png      # 1Dバンドダイアグラム ← NEW
 ```
 
 ## ファイル構成
@@ -351,12 +363,372 @@ Si基板
 - z方向の推奨格子間隔: 5nm (より細かい分解能)
 
 ### 境界条件の物理的意味
-- **トップゲート (z=100nm)**: ディリクレ境界条件
+- **トップゲート (z=0nm, 表面)**: ディリクレ境界条件
   - 電極電位を固定（例: -1.0V）
 
-- **基板底面 (z=0)**: ノイマン境界条件
+- **基板底面 (z=-size_z)**: ノイマン境界条件
   - 電場のz成分を指定（通常は0）
 
 - **側面 (x, y方向)**: ノイマンまたは周期境界条件
   - ノイマン: 構造が十分に広い場合
   - 周期: 周期的な構造を想定する場合
+
+---
+
+## Phase 1: ヘテロ構造バンド曲がり計算 (実装中)
+
+### 実装状況
+
+#### ✓ 完了した実装
+
+##### 1. 材料データベースシステム (`materials.py`)
+**実装内容:**
+- `Material` dataclass
+  - `name`, `epsilon_r`, `electron_affinity`, `band_gap`
+  - `effective_mass_e`, `effective_mass_h` (将来使用)
+- `MATERIAL_DATABASE`: Si, SiO2の物性値（4K）
+- `get_material(name, overrides)`: ハイブリッド取得
+  - データベースから自動取得
+  - YAMLで個別上書き可能
+
+**材料パラメータ (4K):**
+| Material | εr   | χ (eV) | Eg (eV) | me* | mh* |
+|----------|------|--------|---------|-----|-----|
+| Si       | 11.7 | 4.05   | 1.12    | 0.26| 0.36|
+| SiO2     | 3.9  | 0.9    | 9.0     | -   | -   |
+
+**テスト:** `test_materials.py` - 8テスト、全てパス ✓
+
+##### 2. SolverResultコンテナ (`solver_result.py`)
+**メモリ効率設計:**
+- 保持: `phi`, `x`, `y`, `z`, `materials` (list), `info`
+- `Ec`, `Ev`は計算時のみ生成（保存しない）
+- `materials`: z層ごとのリスト (3D配列ではない)
+
+**バンドエッジ計算式:**
+```
+Ec(r) = -φ(r) - χ(z)  [eV]
+Ev(r) = Ec(r) - Eg(z) [eV]
+```
+φ [V] は数値的にq·φ [eV]と等価
+
+**主要メソッド:**
+- `compute_Ec()`, `compute_Ev()`: バンドエッジ計算
+- `get_band_diagram_1d(x_idx, y_idx)`: z方向プロファイル抽出
+- `save()`, `load()`: 永続化
+
+**特徴:**
+- `materials=None`をサポート（後方互換性）
+- 初期化時に配列形状を検証
+- プロパティ: `nz`, `nx`, `ny`
+
+##### 3. StructureManager拡張
+**追加機能:**
+- `materials_list`: 各z層のMaterialオブジェクト
+- `generate_materials_list()`: YAMLから材料リスト生成
+  - 材料名でデータベースから取得
+  - YAML上書きを適用
+  - 各z格子点に1つのMaterialオブジェクト
+
+**`params`プロパティ更新:**
+```python
+{
+    "epsilon": epsilon_array,
+    "grid_spacing": h,
+    "boundary_conditions": boundary_conditions,
+    "electrode_mask": electrode_mask,
+    "electrode_voltages": electrode_voltages,
+    "materials_list": materials_list,  # NEW
+}
+```
+
+**テスト:** 既存テスト全てパス ✓
+
+##### 4. PoissonSolver拡張
+**変更点:**
+- `params`で`materials_list`を受け取り
+- `solve()`が`SolverResult`を返す（`(phi, info)`ではない）
+- `_create_solver_result()`: 結果オブジェクト生成ヘルパー
+
+**後方互換性:** なし（要求に応じて削除）
+
+**テスト:** `test_solver.py` - 4テスト、全てパス ✓
+- テストは`materials=None`で動作（バンド計算は不要）
+
+#### ⏳ 残りのタスク (Phase 1)
+
+##### 5. 1Dバンドダイアグラム可視化 (`visualizer.py`)
+**関数:** `plot_band_diagram_1d(result, x_idx, y_idx, save_path)`
+
+**機能:**
+- Ec(z), Ev(z)を実線でプロット
+- -φ(z)を破線でプロット（フェルミ準位のシフト）
+- 材料境界を縦線でマーク
+- 軸: エネルギー (eV) vs z位置 (nm)
+- 凡例、グリッド、ラベル
+
+##### 6. バンド曲がりテスト (`test_solver.py`)
+**テスト:** `test_band_bending_si_sio2()`
+
+**検証項目:**
+1. Si/SiO2構造をStructureManagerで作成
+2. ポアソン方程式を解く
+3. 以下を確認:
+   - `Ec`, `Ev`配列の形状
+   - 全点で`Ec - Ev = Eg`
+   - Si領域とSiO2領域で異なるバンドパラメータ
+   - Si/SiO2界面でのバンドオフセット（χの不連続）
+   - `SolverResult`オブジェクトの正常生成
+
+##### 7. exampleスクリプト更新
+**ファイル:** `examples/example.py`
+
+**更新内容:**
+- `solve()`から`SolverResult`を受け取る
+- `plot_band_diagram_1d()`を呼び出し
+- `result.save()`で結果保存（Ec, Ev計算含む）
+
+**出力:**
+- `results/figures/band_diagram_1d.png`
+- `results/band_bending_result.npz`
+
+##### 8. ドキュメント更新
+**ファイル:** `README.md`
+
+**新規セクション:** バンド構造計算
+
+**内容:**
+- 機能説明
+- 材料パラメータ設定（データベース vs YAML上書き）
+- 使用例
+- 1Dバンドダイアグラムの解釈
+- 利用可能な材料リスト
+
+---
+
+## Phase 2以降の計画
+
+### Phase 2: 拡張可視化と材料データベース (計画中)
+
+#### 目標
+1. 材料データベース拡張
+2. 2D/3Dバンド構造可視化
+3. 温度依存性パラメータ
+
+#### タスク
+
+**1. 材料データベース拡張**
+- SiGe（各種Ge組成）
+- GaAs, InP, AlGaAs, InGaAs
+- 各材料に4Kと300Kのパラメータ
+- 合金材料の組成依存性
+
+**2. 2Dバンドダイアグラム**
+- 関数: `plot_band_diagram_2d(result, z_index, save_path)`
+- 固定zでのEcまたはEvの2Dヒートマップ
+- 電極パターンのオーバーレイ
+- 横方向のバンド曲がり表示
+
+**3. 3Dバンド可視化**
+- 関数: `plot_band_diagram_3d(result, component, save_path)`
+- 3D等値面またはボリュームレンダリング
+- component: 'Ec', 'Ev', 'Eg'
+- インタラクティブプロット (plotly)
+
+**4. 温度依存性**
+- ソルバ初期化時に温度パラメータ追加
+- 材料データベースにEg(T), χ(T)
+- Vardeman近似でEg(T)を計算
+
+### Phase 3: 自己無撞着計算 (将来)
+
+#### 目標
+1. ドーピングによる空間電荷考慮
+2. ポアソン-キャリア密度連成
+3. 自己無撞着反復
+
+#### タスク
+
+**1. ドーピングプロファイル**
+StructureManagerに追加:
+```yaml
+layers:
+  - material: "Si"
+    z_range: [-20e-9, -100e-9]
+    doping_type: "n"  # or "p"
+    doping_density: 1e18  # cm^-3
+```
+
+電荷密度:
+```
+ρ(r) = q(p - n + Nd - Na)
+```
+
+**2. キャリア密度計算**
+
+*Boltzmann近似（古典、高温）:*
+```python
+n(r) = Nc * exp((Ef - Ec(r)) / kT)
+p(r) = Nv * exp((Ev(r) - Ef) / kT)
+```
+
+*Fermi-Dirac統計（量子、低温）:*
+- Fermi-Dirac積分を実装
+- 極低温でより正確
+
+**3. 自己無撞着ループ**
+```
+1. φ(r) = 0で初期化
+2. φ(r)からEc(r), Ev(r)を計算
+3. Ec(r), Ev(r), EfからN(r), p(r)を計算
+4. n(r), p(r), ドーピングからρ(r)を計算
+5. ポアソン方程式を解く: -∇⋅(ε∇φ) = ρ/ε0
+6. |φ_new - φ_old| < tolerance なら収束
+7. そうでなければ φ = φ_new, ステップ2へ
+```
+
+実装:
+- 新メソッド: `PoissonSolver.solve_self_consistent()`
+- φとn/p両方の収束を追跡
+- 安定性のためのダンピング/ミキシング
+
+**4. フェルミ準位計算**
+
+*大域平衡:*
+- 電荷中性からEfを計算
+- 非平衡では空間的に変化
+
+*準フェルミ準位（発展）:*
+- 電子と正孔で別々のEf
+- バイアスまたは照明下
+
+### Phase 4: 量子効果 (将来)
+
+#### 目標
+1. 量子井戸/量子細線計算
+2. サブバンド構造
+3. トンネル電流
+
+#### タスク
+
+**1. Schrödinger-Poisson連成**
+
+*1D Schrödinger方程式（z方向）:*
+```
+[-ħ²/2m* d²/dz² + Ec(z)]ψ(z) = E·ψ(z)
+```
+
+*自己無撞着ループ:*
+```
+1. PoissonでEc(z)を解く
+2. Schrödingerでψ(z), Eを解く
+3. |ψ(z)|²からキャリア密度を計算
+4. 更新されたρ(z)でPoissonを解く
+5. 収束まで繰り返し
+```
+
+**2. サブバンド構造**
+
+*量子井戸:*
+- エネルギー準位En
+- 波動関数ψn(z)
+- 2D状態密度
+
+*可視化:*
+- Ec(z)にψn(z)を重ねてプロット
+- エネルギー準位図
+
+**3. トンネル計算**
+
+*WKB近似:*
+- 障壁を通過するトンネル確率
+- 量子ドット、共鳴トンネルダイオードに関連
+
+---
+
+## データフロー概要
+
+```
+YAML設定
+    ↓
+StructureManager
+    ├→ epsilon_array (nz, nx, ny)
+    ├→ materials_list [Material × nz]
+    ├→ electrode_mask, electrode_voltages
+    └→ boundary_conditions
+    ↓
+PoissonSolver.params
+    ↓
+PoissonSolver.solve()
+    ├→ φ(r) via SOR iteration
+    └→ SolverResult
+           ├─ phi, x, y, z
+           ├─ materials
+           ├─ info
+           ├─ compute_Ec() → Ec(r)
+           ├─ compute_Ev() → Ev(r)
+           └─ get_band_diagram_1d() → z, Ec, Ev, phi
+    ↓
+Visualizer
+    ├→ plot_band_diagram_1d()
+    ├→ plot_band_diagram_2d() [Phase 2]
+    └→ plot_band_diagram_3d() [Phase 2]
+```
+
+---
+
+## 設計原則
+
+### メモリ効率
+- **計算可能なものは保存しない**: Ec, Evはオンデマンドで計算
+- **z層材料リスト**: nz個のMaterialリスト、(nz,nx,ny)配列ではない
+- **遅延評価**: バンドエッジは必要時のみ
+
+### モジュール性
+- **材料データベース**: 集中管理、拡張容易
+- **ハイブリッドパラメータシステム**: データベースデフォルト + YAML上書き
+- **SolverResult**: 結果アクセスのクリーンなインターフェース
+
+### テスト戦略
+- **単体テスト**: 各モジュールを独立してテスト
+- **統合テスト**: 全ワークフロー（YAML → solve → band diagram）
+- **検証テスト**: 可能な場合は解析解と比較
+
+---
+
+## パフォーマンス考慮事項
+
+### 現在のボトルネック
+1. **SOR反復**: JITコンパイル済み、既に最適化
+2. **バンドエッジ計算**: O(nz·nx·ny)、現在の格子サイズでは許容範囲
+
+### 将来の最適化（必要に応じて）
+1. **ベクトル化**: バンドエッジ計算で既に実装
+2. **キャッシング**: 複数回アクセス時はEc, Evをキャッシュ
+3. **疎格子**: 適応的メッシュ細分化
+4. **GPU加速**: 非常に大きな3Dグリッド用
+
+---
+
+## 参考
+
+### バンド構造形式
+- 真空準位を基準 (E = 0)
+- Ec(r) = -q·φ(r) - χ(r)
+- Ev(r) = Ec(r) - Eg(r)
+- 界面でのバンドオフセット: ΔEc = χ₁ - χ₂
+
+### 材料パラメータ (4K)
+**Si:**
+- χ = 4.05 eV (電子親和力)
+- Eg = 1.12 eV (間接遷移)
+- εr = 11.7
+
+**SiO2:**
+- χ = 0.9 eV
+- Eg = 9.0 eV (絶縁体)
+- εr = 3.9
+
+**バンドオフセット (Si/SiO2):**
+- ΔEc ≈ 3.15 eV (伝導帯)
+- ΔEv ≈ 4.73 eV (価電子帯)
