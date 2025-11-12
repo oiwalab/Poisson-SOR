@@ -32,9 +32,6 @@ def main():
     print(f"Grid: ({manager.nx}, {manager.ny}, {manager.nz})")
     print(f"Electrodes: {[e['name'] for e in manager.electrodes]}")
 
-    # Create Poisson solver
-    solver = PoissonSolver(manager.params, omega=1.8, tolerance=1e-6)
-
     # Create interpolator at Si/SiO2 interface (z = -20nm)
     print("\n" + "=" * 70)
     print("Creating PotentialInterpolator at Si/SiO2 interface (z=-20nm)")
@@ -43,9 +40,11 @@ def main():
     z_interface = -20e-9  # Si/SiO2 interface position
     interp = PotentialInterpolator(
         manager,
-        solver,
         z_position=z_interface,
         charge_density=None,  # No charge density (ρ=0)
+        omega=1.8,
+        tolerance=1e-6,
+        max_iterations=10000,
         verbose=True
     )
 

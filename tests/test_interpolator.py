@@ -26,24 +26,29 @@ def small_config():
 
 
 @pytest.fixture
-def structure_and_solver(small_config):
-    """Create StructureManager and PoissonSolver from small test config"""
+def structure_manager(small_config):
+    """Create StructureManager from small test config"""
     manager = StructureManager(small_config)
-    # Use faster convergence settings for testing
-    solver = PoissonSolver(manager.params, omega=1.8, tolerance=1e-5, max_iterations=5000)
-    return manager, solver
+    return manager
+
+
+# Common solver parameters for tests
+SOLVER_PARAMS = {"omega": 1.8, "tolerance": 1e-5, "max_iterations": 5000}
 
 
 class TestPotentialInterpolatorInit:
     """Test initialization of PotentialInterpolator"""
 
-    def test_init_with_z_position(self, structure_and_solver):
+    def test_init_with_z_position(self, structure_manager):
         """Test initialization with z-coordinate"""
-        manager, solver = structure_and_solver
+        manager = structure_manager
 
         # Create interpolator at Si/SiO2 interface (z=-10nm for small config)
         interp = PotentialInterpolator(
-            manager, solver, z_position=-10e-9, verbose=False
+            manager,
+            z_position=-10e-9,
+            **SOLVER_PARAMS,
+            verbose=False
         )
 
         assert interp.z_position == pytest.approx(-10e-9, abs=1e-9)
@@ -53,49 +58,49 @@ class TestPotentialInterpolatorInit:
         assert interp.basis_potentials.shape == (2, manager.nx, manager.ny)
         assert interp.particular_potential.shape == (manager.nx, manager.ny)
 
-    def test_init_at_surface(self, structure_and_solver):
+    def test_init_at_surface(self, structure_manager):
         """Test initialization at surface (z=0)"""
-        manager, solver = structure_and_solver
+        manager = structure_manager
 
-        interp = PotentialInterpolator(manager, solver, z_position=0.0, verbose=False)
+        interp = PotentialInterpolator(manager, z_position=0.0, verbose=False, **SOLVER_PARAMS)
 
         assert interp.z_position == 0.0
         assert interp.z_index == 0
 
-    def test_init_at_bottom(self, structure_and_solver):
+    def test_init_at_bottom(self, structure_manager):
         """Test initialization at domain bottom"""
-        manager, solver = structure_and_solver
+        manager = structure_manager
 
         # Bottom is at z = -size_z
         z_bottom = -manager.size_z
         interp = PotentialInterpolator(
-            manager, solver, z_position=z_bottom, verbose=False
+            manager, z_position=z_bottom, verbose=False
         )
 
         assert interp.z_position == pytest.approx(z_bottom, abs=1e-9)
         assert interp.z_index == manager.nz - 1
 
-    def test_init_out_of_bounds(self, structure_and_solver):
+    def test_init_out_of_bounds(self, structure_manager):
         """Test that out-of-bounds z raises ValueError"""
-        manager, solver = structure_and_solver
+        manager = structure_manager
 
         # Too negative
         with pytest.raises(ValueError, match="outside domain"):
-            PotentialInterpolator(manager, solver, z_position=-200e-9, verbose=False)
+            PotentialInterpolator(manager, z_position=-200e-9, verbose=False, **SOLVER_PARAMS)
 
         # Too positive
         with pytest.raises(ValueError, match="outside domain"):
-            PotentialInterpolator(manager, solver, z_position=10e-9, verbose=False)
+            PotentialInterpolator(manager, z_position=10e-9, verbose=False, **SOLVER_PARAMS)
 
-    def test_init_with_charge_density(self, structure_and_solver):
+    def test_init_with_charge_density(self, structure_manager):
         """Test initialization with non-zero charge density"""
-        manager, solver = structure_and_solver
+        manager = structure_manager
 
         # Create uniform charge density
         rho = np.ones((manager.nz, manager.nx, manager.ny)) * 1e15  # C/m^3
 
         interp = PotentialInterpolator(
-            manager, solver, z_position=-10e-9, charge_density=rho, verbose=False
+            manager, z_position=-10e-9, charge_density=rho, verbose=False
         )
 
         # Particular potential should be non-zero
@@ -105,12 +110,12 @@ class TestPotentialInterpolatorInit:
 class TestPotentialInterpolatorInterpolation:
     """Test interpolation functionality"""
 
-    def test_interpolate_all_zero(self, structure_and_solver):
+    def test_interpolate_all_zero(self, structure_manager):
         """Test interpolation with all voltages zero"""
-        manager, solver = structure_and_solver
+        manager = structure_manager
 
         interp = PotentialInterpolator(
-            manager, solver, z_position=-10e-9, verbose=False
+            manager, z_position=-10e-9, verbose=False
         )
 
         voltages = {"gate_left": 0.0, "gate_right": 0.0}
@@ -120,12 +125,12 @@ class TestPotentialInterpolatorInterpolation:
         assert phi.shape == (manager.nx, manager.ny)
         np.testing.assert_allclose(phi, interp.particular_potential, atol=1e-10)
 
-    def test_interpolate_single_electrode(self, structure_and_solver):
+    def test_interpolate_single_electrode(self, structure_manager):
         """Test interpolation with single electrode at 1V"""
-        manager, solver = structure_and_solver
+        manager = structure_manager
 
         interp = PotentialInterpolator(
-            manager, solver, z_position=-10e-9, verbose=False
+            manager, z_position=-10e-9, verbose=False
         )
 
         # Only first electrode at 1V
@@ -136,12 +141,12 @@ class TestPotentialInterpolatorInterpolation:
         expected = interp.particular_potential + interp.basis_potentials[0]
         np.testing.assert_allclose(phi, expected, atol=1e-10)
 
-    def test_linearity_scaling(self, structure_and_solver):
+    def test_linearity_scaling(self, structure_manager):
         """Test linearity: φ(2V) = 2·φ(1V) for single electrode"""
-        manager, solver = structure_and_solver
+        manager = structure_manager
 
         interp = PotentialInterpolator(
-            manager, solver, z_position=-10e-9, verbose=False
+            manager, z_position=-10e-9, verbose=False
         )
 
         # Compute for 1V
@@ -161,12 +166,12 @@ class TestPotentialInterpolatorInterpolation:
             atol=1e-10
         )
 
-    def test_superposition(self, structure_and_solver):
+    def test_superposition(self, structure_manager):
         """Test superposition principle"""
-        manager, solver = structure_and_solver
+        manager = structure_manager
 
         interp = PotentialInterpolator(
-            manager, solver, z_position=-10e-9, verbose=False
+            manager, z_position=-10e-9, verbose=False
         )
 
         # Compute individual solutions
@@ -183,12 +188,12 @@ class TestPotentialInterpolatorInterpolation:
         expected = phi_1 + phi_2 - interp.particular_potential
         np.testing.assert_allclose(phi_combined, expected, atol=1e-10)
 
-    def test_call_method(self, structure_and_solver):
+    def test_call_method(self, structure_manager):
         """Test __call__ method is equivalent to interpolate"""
-        manager, solver = structure_and_solver
+        manager = structure_manager
 
         interp = PotentialInterpolator(
-            manager, solver, z_position=-10e-9, verbose=False
+            manager, z_position=-10e-9, verbose=False
         )
 
         voltages = {"gate_left": 0.5, "gate_right": 1.0}
@@ -198,12 +203,12 @@ class TestPotentialInterpolatorInterpolation:
 
         np.testing.assert_array_equal(phi_interpolate, phi_call)
 
-    def test_missing_electrode_raises_error(self, structure_and_solver):
+    def test_missing_electrode_raises_error(self, structure_manager):
         """Test that missing electrode in voltages raises ValueError"""
-        manager, solver = structure_and_solver
+        manager = structure_manager
 
         interp = PotentialInterpolator(
-            manager, solver, z_position=-10e-9, verbose=False
+            manager, z_position=-10e-9, verbose=False
         )
 
         # Missing gate_right
@@ -212,12 +217,12 @@ class TestPotentialInterpolatorInterpolation:
         with pytest.raises(ValueError, match="Missing"):
             interp(voltages)
 
-    def test_extra_electrode_raises_error(self, structure_and_solver):
+    def test_extra_electrode_raises_error(self, structure_manager):
         """Test that extra electrode in voltages raises ValueError"""
-        manager, solver = structure_and_solver
+        manager = structure_manager
 
         interp = PotentialInterpolator(
-            manager, solver, z_position=-10e-9, verbose=False
+            manager, z_position=-10e-9, verbose=False
         )
 
         # Extra electrode
@@ -234,13 +239,13 @@ class TestPotentialInterpolatorInterpolation:
 class TestPotentialInterpolatorAccuracy:
     """Test accuracy by comparing with direct solver"""
 
-    def test_accuracy_vs_direct_solve(self, structure_and_solver):
+    def test_accuracy_vs_direct_solve(self, structure_manager):
         """Compare interpolation with direct Poisson solver"""
-        manager, solver = structure_and_solver
+        manager = structure_manager
 
         # Create interpolator
         interp = PotentialInterpolator(
-            manager, solver, z_position=-10e-9, verbose=False
+            manager, z_position=-10e-9, **SOLVER_PARAMS, verbose=False
         )
 
         # Test voltages
@@ -253,8 +258,8 @@ class TestPotentialInterpolatorAccuracy:
         for i, (name, voltage) in enumerate(test_voltages.items()):
             manager.electrodes[i]["voltage"] = voltage
         manager.get_electrode_voltages()
-        solver.electrode_voltages = manager.electrode_voltages
 
+        solver = PoissonSolver(manager.params, **SOLVER_PARAMS)
         result_direct = solver.solve(rho=None, verbose=False)
         phi_direct = result_direct.phi[interp.z_index, :, :]
 
@@ -262,12 +267,12 @@ class TestPotentialInterpolatorAccuracy:
         # Looser tolerance due to iterative solver convergence differences
         np.testing.assert_allclose(phi_interp, phi_direct, atol=1e-5, rtol=1e-5)
 
-    def test_accuracy_different_voltages(self, structure_and_solver):
+    def test_accuracy_different_voltages(self, structure_manager):
         """Test accuracy for different voltage combinations"""
-        manager, solver = structure_and_solver
+        manager = structure_manager
 
         interp = PotentialInterpolator(
-            manager, solver, z_position=-10e-9, verbose=False
+            manager, z_position=-10e-9, **SOLVER_PARAMS, verbose=False
         )
 
         # Test multiple voltage combinations
@@ -286,8 +291,8 @@ class TestPotentialInterpolatorAccuracy:
             for i, (name, voltage) in enumerate(voltages.items()):
                 manager.electrodes[i]["voltage"] = voltage
             manager.get_electrode_voltages()
-            solver.electrode_voltages = manager.electrode_voltages
 
+            solver = PoissonSolver(manager.params, **SOLVER_PARAMS)
             result_direct = solver.solve(rho=None, verbose=False)
             phi_direct = result_direct.phi[interp.z_index, :, :]
 
@@ -301,13 +306,13 @@ class TestPotentialInterpolatorAccuracy:
 class TestPotentialInterpolatorSaveLoad:
     """Test save/load functionality"""
 
-    def test_save_and_load(self, structure_and_solver):
+    def test_save_and_load(self, structure_manager):
         """Test saving and loading interpolator"""
-        manager, solver = structure_and_solver
+        manager = structure_manager
 
         # Create interpolator
         interp_original = PotentialInterpolator(
-            manager, solver, z_position=-10e-9, verbose=False
+            manager, z_position=-10e-9, verbose=False
         )
 
         # Save to temporary file
@@ -339,12 +344,12 @@ class TestPotentialInterpolatorSaveLoad:
             if os.path.exists(filepath):
                 os.remove(filepath)
 
-    def test_loaded_interpolator_works(self, structure_and_solver):
+    def test_loaded_interpolator_works(self, structure_manager):
         """Test that loaded interpolator produces same results"""
-        manager, solver = structure_and_solver
+        manager = structure_manager
 
         interp_original = PotentialInterpolator(
-            manager, solver, z_position=-10e-9, verbose=False
+            manager, z_position=-10e-9, verbose=False
         )
 
         # Save and load
@@ -371,12 +376,12 @@ class TestPotentialInterpolatorSaveLoad:
 class TestPotentialInterpolatorRepr:
     """Test string representation"""
 
-    def test_repr(self, structure_and_solver):
+    def test_repr(self, structure_manager):
         """Test __repr__ method"""
-        manager, solver = structure_and_solver
+        manager = structure_manager
 
         interp = PotentialInterpolator(
-            manager, solver, z_position=-10e-9, verbose=False
+            manager, z_position=-10e-9, verbose=False
         )
 
         repr_str = repr(interp)

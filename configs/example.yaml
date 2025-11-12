@@ -8,49 +8,56 @@
 # Structure:
 # z = 0nm: Surface (electrodes)
 # ---------------
-# SiO2 (0nm to -10nm)
+# SiO2 (0nm to -25nm)
 # ---------------
-# Si  (-10nm to -50nm)
+# Si  (-25nm to -70nm)
 # ---------------
 
 # Computational domain
 domain:
-  size: [100e-9, 100e-9, 100e-9]  # [x, y, z] in meters (100nm x 100nm x 100nm)
+  size: [140e-9, 100e-9, 80e-9]  # [x, y, z] in meters (140nm x 100nm x 80nm)
   grid_spacing: 1e-9  # h in meters (1nm, isotropic grid)
 
 # Material layer structure
 # z_range format: [z_max, z_min] where z_max > z_min
 layers:
   - material: "SiO2"
-    z_range: [0, -20e-9]  # 0nm → -10nm: Silicon oxide layer (surface side)
+    z_range: [0, -25e-9]  # 0nm → -25nm: Silicon oxide layer (surface side)
 
   - material: "Si"
-    z_range: [-20e-9, -100e-9]  # -10nm → -100nm: Silicon substrate (bottom side)
+    z_range: [-25e-9, -70e-9]  # -25nm → -70nm: Silicon substrate (bottom side)
 
 # Electrode structure (multiple finger gates)
 # z_position: electrode bottom position (negative value)
 # Electrode extends from z_position to z=0 (surface)
 electrodes:
-  - name: "finger_gate_1"
+  - name: "gate_1"
     shape: "rectangle"
-    x_range: [10e-9, 30e-9]  # 10-30nm in x
-    y_range: [0, 100e-9]     # Full width in y
-    z_position: -5e-9        # Electrode bottom at z=-5nm (5nm thick: z=0 → z=-5nm)
-    voltage: 0.5            # -0.5V
+    x_range: [0e-9, 30e-9]  # 0-30nm in x
+    y_range: [20e-9, 80e-9]     # 20-80nm in y
+    z_position: -15e-9        # Electrode bottom at z=-15nm (15nm thick: z=0 → z=-15nm)
+    voltage: 0.0            # 0V
 
-  - name: "finger_gate_2"
+  - name: "gate_2"
     shape: "rectangle"
-    x_range: [40e-9, 60e-9]
-    y_range: [0, 100e-9]
-    z_position: -5e-9        # Electrode bottom at z=-5nm
-    voltage: 1.0            # -1.0V
+    x_range: [35e-9, 65e-9]  # 35-65nm in x
+    y_range: [20e-9, 80e-9]  # 20-80nm in y
+    z_position: -15e-9        # Electrode bottom at z=-15nm
+    voltage: 0.0            # 0V
 
-  - name: "finger_gate_3"
+  - name: "gate_3"
     shape: "rectangle"
-    x_range: [70e-9, 90e-9]
-    y_range: [0, 100e-9]
-    z_position: -5e-9        # Electrode bottom at z=-5nm
-    voltage: 0.5            # -0.5V
+    x_range: [70e-9, 100e-9]  # 70-100nm in x
+    y_range: [20e-9, 80e-9]  # 20-80nm in y
+    z_position: -15e-9        # Electrode bottom at z=-15nm
+    voltage: 0.0            # 0V
+
+  - name: "gate_4"
+    shape: "rectangle"
+    x_range: [105e-9, 135e-9]  # 105-135nm in x
+    y_range: [20e-9, 80e-9]  # 20-80nm in y
+    z_position: -15e-9        # Electrode bottom at z=-15nm
+    voltage: 0.0            # 0V
 
 # Boundary conditions
 boundary_conditions:
@@ -67,5 +74,5 @@ boundary_conditions:
     value: 0.0
 
   y_sides:
-    type: "periodic"                  # or "neumann"
+    type: "dirichlet"                  # or "neumann"
     value: 0.0

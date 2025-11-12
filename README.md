@@ -14,6 +14,8 @@ This solver solves the Poisson equation $-\nabla \cdot (\varepsilon \nabla \phi)
 - **Electrode Configuration**: 3D volumetric electrodes with voltage control
 - **Boundary Conditions**: Dirichlet, Neumann, and periodic options
 - **Fast Interpolation**: Linear interpolation for rapid potential computation at different voltages
+- **Time-Dependent Potential**: Dynamic gate voltage control with analytical or discrete time functions
+- **Animation**: Create animations of time-varying potential distributions
 - **Visualization**: Potential distribution, band diagrams, convergence history
 - **YAML Configuration**: Human-readable structure definitions
 
@@ -23,6 +25,7 @@ This solver solves the Poisson equation $-\nabla \cdot (\varepsilon \nabla \phi)
 - numpy 2.3.4+
 - numba 0.62.1+
 - matplotlib 3.10.7+
+- scipy 1.11.0+
 - pyyaml 6.0.3+
 - pytest 8.4.2+
 
@@ -78,9 +81,11 @@ from potential_interpolator import PotentialInterpolator
 # Create interpolator at Si/SiO2 interface (z=-20nm)
 interp = PotentialInterpolator(
     manager,
-    solver,
-    z_position=-20e-9,  # Physical coordinate
-    charge_density=None  # Optional charge density
+    z_position=-20e-9,      # Physical coordinate
+    charge_density=None,    # Optional charge density
+    omega=1.8,              # SOR parameter (optional)
+    tolerance=1e-6,         # Convergence tolerance (optional)
+    max_iterations=10000    # Max iterations (optional)
 )
 
 # Compute potential for any voltage combination (fast!)
@@ -103,6 +108,47 @@ The interpolator pre-computes basis functions (one per electrode) and uses linea
 φ(V₁, V₂, ..., Vₙ) = φ_particular + Σᵢ Vᵢ·φᵢ
 ```
 This is mathematically exact for linear systems and ~1000× faster than re-solving.
+
+### Time-Dependent Potential
+
+For dynamic gate voltage control, combine spatial interpolation with temporal interpolation:
+
+```python
+from time_dependent_potential import TimeDependentPotential
+import numpy as np
+
+# Define time-dependent voltages
+voltages = {
+    "finger_gate_1": lambda t: 0.5 * np.sin(2*np.pi*1e9*t),  # 1 GHz sine wave
+    "finger_gate_2": ([0, 1e-9, 2e-9], [0.0, 1.0, 0.0]),    # Pulse (discrete data)
+    "finger_gate_3": 0.3  # Constant voltage
+}
+
+# Create time-dependent potential calculator
+td_pot = TimeDependentPotential(interp, voltages)
+
+# Get potential at specific time
+phi = td_pot(t=0.5e-9)  # t=0.5 ns
+
+# Get time series
+t_array = np.linspace(0, 2e-9, 100)
+phi_series = td_pot.get_time_series(t_array)  # shape: (100, nx, ny)
+
+# Create animation
+anim = td_pot.animate(t_array, save_path='potential_dynamics.gif', fps=20)
+```
+
+**Supported voltage specifications:**
+- **Analytical functions**: `lambda t: V(t)`
+- **Discrete data**: `(t_array, V_array)` with linear/cubic interpolation
+- **Constants**: `float` for time-independent voltages
+- **Mixed types**: Different electrodes can use different specifications
+
+Time-dependent calculation:
+```
+φ(x, y, t) = φ_particular + Σᵢ Vᵢ(t)·φᵢ(x, y)
+```
+This allows O(1) computation for any time point after initial basis setup.
 
 ## Configuration File
 
@@ -180,24 +226,26 @@ uv run jupyter notebook examples/tutorial.ipynb
 ```
 .
 ├── src/
-│   ├── materials.py              # Material database (Si, SiO2, etc.)
-│   ├── structure_manager.py      # Structure and grid management
-│   ├── poisson_solver.py         # SOR Poisson solver (JIT compiled)
-│   ├── solver_result.py          # Results container with band structure
-│   ├── potential_interpolator.py # Fast voltage interpolation
-│   └── visualizer.py             # Visualization utilities
+│   ├── materials.py                # Material database (Si, SiO2, etc.)
+│   ├── structure_manager.py        # Structure and grid management
+│   ├── poisson_solver.py           # SOR Poisson solver (JIT compiled)
+│   ├── solver_result.py            # Results container with band structure
+│   ├── potential_interpolator.py   # Fast voltage interpolation
+│   ├── time_dependent_potential.py # Time-dependent voltage dynamics
+│   └── visualizer.py               # Visualization utilities
 ├── configs/
-│   └── example.yaml              # Example configuration (Si/SiO2 with finger gates)
+│   └── example.yaml                # Example configuration (Si/SiO2 with finger gates)
 ├── examples/
-│   ├── example.py                # Basic usage example
-│   ├── interpolator_example.py   # Interpolation demo
-│   └── tutorial.ipynb            # Interactive tutorial
+│   ├── example.py                  # Basic usage example
+│   ├── interpolator_example.py     # Interpolation demo
+│   └── tutorial.ipynb              # Interactive tutorial
 ├── tests/
-│   ├── test_config_small.yaml    # Small test configuration (21³ grid)
-│   ├── test_materials.py         # Material database tests
-│   ├── test_structure_manager.py # Structure manager tests
-│   ├── test_solver.py            # Solver tests with physics validation
-│   └── test_interpolator.py     # Interpolation tests (17 tests)
+│   ├── test_config_small.yaml      # Small test configuration (21³ grid)
+│   ├── test_materials.py           # Material database tests
+│   ├── test_structure_manager.py   # Structure manager tests
+│   ├── test_solver.py              # Solver tests with physics validation
+│   ├── test_interpolator.py       # Interpolation tests (17 tests)
+│   └── test_time_dependent.py     # Time-dependent tests (15 tests)
 └── README.md
 ```
 
@@ -225,7 +273,8 @@ Test results (as of latest commit):
 - `test_materials.py`: Material database validation
 - `test_structure_manager.py`: Structure loading and grid generation
 - `test_solver.py`: Physics-based solver validation (parallel plate, point charge, band bending)
-- `test_interpolator.py`: 17 tests covering initialization, interpolation, accuracy, save/load (1.7s runtime)
+- `test_interpolator.py`: 17 tests covering initialization, interpolation, accuracy, save/load (2.5s runtime)
+- `test_time_dependent.py`: 15 tests covering voltage functions, time-dependent computation, accuracy (11s runtime)
 
 ## Development
 
@@ -300,9 +349,11 @@ Fast interpolation for different electrode voltages.
 ```python
 interp = PotentialInterpolator(
     manager,
-    solver,
     z_position=-20e-9,      # Physical z-coordinate (m)
     charge_density=None,    # Optional charge density
+    omega=1.8,              # SOR relaxation parameter (optional)
+    tolerance=1e-6,         # Convergence tolerance (optional)
+    max_iterations=10000,   # Max iterations (optional)
     verbose=True
 )
 
@@ -313,6 +364,44 @@ phi_2d = interp(voltages)           # or interp.interpolate(voltages)
 # Save/load
 interp.save("interp.npz")
 interp = PotentialInterpolator.load("interp.npz")
+```
+
+#### `TimeDependentPotential`
+Time-dependent potential for dynamic gate voltage control.
+
+```python
+from time_dependent_potential import TimeDependentPotential
+
+# Define time-dependent voltages
+voltages = {
+    "gate1": lambda t: V(t),           # Analytical function
+    "gate2": (t_array, V_array),       # Discrete data
+    "gate3": 0.5                        # Constant
+}
+
+td_pot = TimeDependentPotential(
+    interp,                             # PotentialInterpolator instance
+    voltages,
+    interpolation_kind='linear'         # 'linear', 'cubic', 'nearest'
+)
+
+# Get potential at time t
+phi = td_pot(t=1e-9)                   # or td_pot.get_potential(t)
+
+# Get voltage at time t
+voltages_t = td_pot.get_voltage_at_time(t)
+
+# Time series
+t_array = np.linspace(0, 2e-9, 100)
+phi_series = td_pot.get_time_series(t_array)  # shape: (100, nx, ny)
+
+# Animation
+anim = td_pot.animate(
+    t_array,
+    save_path='animation.gif',         # or .mp4
+    fps=30,
+    show_voltages=True
+)
 ```
 
 ### Material Database
@@ -367,13 +456,6 @@ where:
 - **Interpolation**: ~1000× faster than re-solving once basis functions are computed
 - **Typical Runtime**: 100³ grid ~5-10s per solve, 20³ grid ~0.5s per solve
 
-## Citation
-
-If you use this code in your research, please cite:
-
-```
-(Add citation information if applicable)
-```
 
 ## License
 
