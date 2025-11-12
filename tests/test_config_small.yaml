@@ -1,0 +1,50 @@
+# Small configuration for fast unit testing
+# Grid: ~20x20x20 points
+# Si/SiO2 system with 2 simple electrodes
+
+# Computational domain
+domain:
+  size: [20e-9, 20e-9, 20e-9]  # 20nm x 20nm x 20nm
+  grid_spacing: 1e-9  # 1nm spacing → 21x21x21 grid
+
+# Material layers
+layers:
+  - material: "SiO2"
+    z_range: [0, -10e-9]  # 0nm to -10nm: oxide layer
+
+  - material: "Si"
+    z_range: [-10e-9, -20e-9]  # -10nm to -20nm: silicon substrate
+
+# Simple electrode structure (2 electrodes for fast testing)
+electrodes:
+  - name: "gate_left"
+    shape: "rectangle"
+    x_range: [2e-9, 8e-9]  # 2-8nm in x
+    y_range: [0, 20e-9]     # Full width in y
+    z_position: -5e-9       # Electrode bottom at z=-5nm
+    voltage: 0.5
+
+  - name: "gate_right"
+    shape: "rectangle"
+    x_range: [12e-9, 18e-9]  # 12-18nm in x
+    y_range: [0, 20e-9]      # Full width in y
+    z_position: -5e-9        # Electrode bottom at z=-5nm
+    voltage: 1.0
+
+# Boundary conditions
+boundary_conditions:
+  z_top:
+    type: "neumann"
+    value: 0.0
+
+  z_bottom:
+    type: "dirichlet"
+    value: 0.0
+
+  x_sides:
+    type: "periodic"
+    value: 0.0
+
+  y_sides:
+    type: "periodic"
+    value: 0.0

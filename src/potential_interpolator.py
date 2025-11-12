@@ -1,0 +1,470 @@
+"""Linear interpolator for 2D potential distributions at specific z-layer
+
+Uses superposition principle for Poisson equation to compute potential
+distributions for arbitrary electrode voltages from pre-computed basis solutions.
+
+Mathematical Background
+-----------------------
+For linear Poisson equation -∇·(ε∇φ) = ρ with N electrodes, the solution
+can be decomposed as:
+
+    φ(V₁, V₂, ..., Vₙ) = φ_particular + Σᵢ Vᵢ·φᵢ
+
+where:
+- φ_particular: Solution with all electrodes at 0V, charge density ρ (computed once)
+- φᵢ: Solution with electrode i at 1V, others at 0V, ρ=0 (computed for each electrode)
+
+This decomposition is exact for linear systems and allows fast computation
+of potential for arbitrary voltage combinations without re-solving.
+
+Example
+-------
+>>> from structure_manager import StructureManager
+>>> from poisson_solver import PoissonSolver
+>>> from potential_interpolator import PotentialInterpolator
+>>>
+>>> # Load structure
+>>> manager = StructureManager("configs/example.yaml")
+>>> solver = PoissonSolver(manager.params)
+>>>
+>>> # Create interpolator at Si/SiO2 interface (z=-20nm for example.yaml)
+>>> interp = PotentialInterpolator(manager, solver, z_position=-20e-9)
+>>>
+>>> # Compute potential for specific voltages
+>>> voltages = {"finger_gate_1": 0.5, "finger_gate_2": 1.0, "finger_gate_3": 0.5}
+>>> phi_2d = interp(voltages)  # Returns (nx, ny) array
+"""
+
+import numpy as np
+from typing import Dict, List, Optional
+from copy import deepcopy
+import warnings
+
+
+class PotentialInterpolator:
+    """Linear interpolator for 2D potential at specific z-coordinate
+
+    Computes 2D potential distributions by linear combination of pre-computed
+    basis solutions. Each basis function corresponds to one electrode at 1V
+    with all others at 0V, computed with ρ=0.
+
+    Parameters
+    ----------
+    structure_manager : StructureManager
+        Structure manager with electrode definitions
+    poisson_solver : PoissonSolver
+        Poisson solver instance (will be modified internally)
+    z_position : float
+        Target z-coordinate (m), e.g., -20e-9 for z=-20nm
+        Must be within computational domain
+    charge_density : np.ndarray, optional
+        Charge density distribution (C/m³), shape=(nz, nx, ny)
+        Used only for particular solution computation
+    verbose : bool, optional
+        Print progress during basis computation (default: True)
+
+    Attributes
+    ----------
+    z_position : float
+        Target z-coordinate (m)
+    z_index : int
+        Grid index corresponding to z_position
+    electrode_names : List[str]
+        Ordered list of electrode names
+    basis_potentials : np.ndarray
+        Basis functions (n_electrodes, nx, ny) at z=z_position, computed with ρ=0
+    particular_potential : np.ndarray
+        Particular solution (nx, ny) at z=z_position with all V=0, ρ≠0
+    x : np.ndarray
+        x-coordinates (m), shape=(nx,)
+    y : np.ndarray
+        y-coordinates (m), shape=(ny,)
+
+    Raises
+    ------
+    ValueError
+        If z_position is out of computational domain
+        If structure has no electrodes defined
+
+    Notes
+    -----
+    - Basis functions are computed with ρ=0 for exact linear decomposition
+    - Particular solution includes charge density effects
+    - Computation time scales linearly with number of electrodes
+    - For systems with many electrodes, consider saving/loading interpolator
+    - Use __call__ method for convenient interpolation: `phi = interp(voltages)`
+
+    Examples
+    --------
+    >>> # Create interpolator at Si/SiO2 interface
+    >>> interp = PotentialInterpolator(manager, solver, z_position=-20e-9)
+    >>>
+    >>> # Option 1: Use __call__
+    >>> phi = interp({"gate1": 0.5, "gate2": 1.0})
+    >>>
+    >>> # Option 2: Use interpolate method
+    >>> phi = interp.interpolate({"gate1": 0.5, "gate2": 1.0})
+    """
+
+    def __init__(
+        self,
+        structure_manager,  # StructureManager type
+        poisson_solver,     # PoissonSolver type
+        z_position: float,
+        charge_density: Optional[np.ndarray] = None,
+        verbose: bool = True,
+    ):
+        # Import here to avoid circular dependency
+        from structure_manager import StructureManager
+        from poisson_solver import PoissonSolver
+
+        # Get coordinate arrays
+        x_coords, y_coords, z_coords = structure_manager.get_grid_coordinates()
+
+        # Find z_index corresponding to z_position
+        z_index = self._find_nearest_z_index(z_coords, z_position)
+        actual_z = z_coords[z_index]
+
+        if verbose:
+            print(f"Target z-position: {z_position*1e9:.2f} nm")
+            print(f"Nearest grid point: z_index={z_index}, z={actual_z*1e9:.2f} nm")
+            if abs(actual_z - z_position) > structure_manager.h / 2:
+                warnings.warn(
+                    f"Requested z={z_position*1e9:.2f} nm is far from grid point "
+                    f"z={actual_z*1e9:.2f} nm (offset={abs(actual_z - z_position)*1e9:.2f} nm)"
+                )
+
+        # Store z information
+        self.z_position = actual_z  # Use actual grid point
+        self.z_index = z_index
+
+        # Check that electrodes exist
+        if not structure_manager.electrodes:
+            raise ValueError("Structure has no electrodes defined")
+
+        self.electrode_names = [e["name"] for e in structure_manager.electrodes]
+        self.n_electrodes = len(self.electrode_names)
+
+        # Store grid dimensions
+        self.nx = structure_manager.nx
+        self.ny = structure_manager.ny
+        self.nz = structure_manager.nz
+
+        # Store coordinates
+        self.x = x_coords
+        self.y = y_coords
+
+        # Store original electrode voltages for restoration
+        self._original_voltages = [e["voltage"] for e in structure_manager.electrodes]
+
+        # Initialize arrays for basis functions
+        self.basis_potentials = np.zeros((self.n_electrodes, self.nx, self.ny))
+        self.particular_potential = np.zeros((self.nx, self.ny))
+
+        if verbose:
+            print(f"Computing basis functions for {self.n_electrodes} electrodes...")
+
+        # Step 1: Compute particular solution (all electrodes at 0V, ρ≠0)
+        self._compute_particular_solution(
+            structure_manager,
+            poisson_solver,
+            charge_density,
+            verbose
+        )
+
+        # Step 2: Compute basis functions (one electrode at 1V, others at 0V, ρ=0)
+        self._compute_basis_functions(
+            structure_manager,
+            poisson_solver,
+            verbose
+        )
+
+        # Restore original voltages
+        for i, electrode in enumerate(structure_manager.electrodes):
+            electrode["voltage"] = self._original_voltages[i]
+        structure_manager.get_electrode_voltages()
+
+        if verbose:
+            print("Interpolator initialization complete.")
+
+    @staticmethod
+    def _find_nearest_z_index(z_coords: np.ndarray, z_target: float) -> int:
+        """Find grid index nearest to target z-coordinate
+
+        Parameters
+        ----------
+        z_coords : np.ndarray
+            Grid z-coordinates (m), shape=(nz,)
+        z_target : float
+            Target z-coordinate (m)
+
+        Returns
+        -------
+        z_index : int
+            Index of nearest grid point
+
+        Raises
+        ------
+        ValueError
+            If z_target is outside computational domain
+        """
+        # Check if target is within domain
+        z_min, z_max = z_coords.min(), z_coords.max()
+        if not (z_min <= z_target <= z_max):
+            raise ValueError(
+                f"z_position={z_target*1e9:.2f} nm is outside domain "
+                f"[{z_min*1e9:.2f}, {z_max*1e9:.2f}] nm"
+            )
+
+        # Find nearest index
+        z_index = int(np.argmin(np.abs(z_coords - z_target)))
+        return z_index
+
+    def _compute_particular_solution(
+        self,
+        structure_manager,
+        poisson_solver,
+        charge_density: Optional[np.ndarray],
+        verbose: bool,
+    ) -> None:
+        """Compute particular solution with all electrodes at 0V
+
+        Parameters
+        ----------
+        structure_manager : StructureManager
+            Structure manager (will be modified)
+        poisson_solver : PoissonSolver
+            Solver instance (will be modified)
+        charge_density : np.ndarray, optional
+            Charge density (C/m³), shape=(nz, nx, ny)
+        verbose : bool
+            Print progress
+        """
+        if verbose:
+            print("  [1/2] Computing particular solution (all V=0, ρ≠0)...")
+
+        # Set all electrodes to 0V
+        for electrode in structure_manager.electrodes:
+            electrode["voltage"] = 0.0
+        structure_manager.get_electrode_voltages()
+
+        # Update solver's electrode voltages
+        poisson_solver.electrode_voltages = structure_manager.electrode_voltages
+
+        # Solve with charge density
+        result = poisson_solver.solve(rho=charge_density, verbose=False)
+
+        if not result.info.get("converged", False):
+            warnings.warn(
+                f"Particular solution did not converge: "
+                f"iterations={result.info.get('iterations', 0)}"
+            )
+
+        # Extract 2D slice at z_index
+        self.particular_potential = result.phi[self.z_index, :, :]
+
+        if verbose:
+            print(f"      Converged: {result.info.get('converged', False)}, "
+                  f"Iterations: {result.info.get('iterations', 0)}")
+
+    def _compute_basis_functions(
+        self,
+        structure_manager,
+        poisson_solver,
+        verbose: bool,
+    ) -> None:
+        """Compute basis functions for each electrode
+
+        Each basis function: electrode i at 1V, others at 0V, ρ=0
+
+        Parameters
+        ----------
+        structure_manager : StructureManager
+            Structure manager (will be modified)
+        poisson_solver : PoissonSolver
+            Solver instance (will be modified)
+        verbose : bool
+            Print progress
+        """
+        if verbose:
+            print(f"  [2/2] Computing {self.n_electrodes} basis functions (ρ=0)...")
+
+        for i, electrode_name in enumerate(self.electrode_names):
+            if verbose:
+                print(f"      [{i+1}/{self.n_electrodes}] Electrode: {electrode_name}")
+
+            # Set voltages: electrode i = 1V, others = 0V
+            for j, electrode in enumerate(structure_manager.electrodes):
+                electrode["voltage"] = 1.0 if j == i else 0.0
+            structure_manager.get_electrode_voltages()
+
+            # Update solver's electrode voltages
+            poisson_solver.electrode_voltages = structure_manager.electrode_voltages
+
+            # Solve with ρ=0 for exact linear decomposition
+            result = poisson_solver.solve(rho=None, verbose=False)
+
+            if not result.info.get("converged", False):
+                warnings.warn(
+                    f"Basis function {i} ({electrode_name}) did not converge: "
+                    f"iterations={result.info.get('iterations', 0)}"
+                )
+
+            # Extract 2D slice at z_index
+            self.basis_potentials[i, :, :] = result.phi[self.z_index, :, :]
+
+    def interpolate(self, voltages: Dict[str, float]) -> np.ndarray:
+        """Compute 2D potential at z_position for given electrode voltages
+
+        Uses linear superposition:
+            φ = φ_particular + Σᵢ Vᵢ·φᵢ
+
+        Parameters
+        ----------
+        voltages : Dict[str, float]
+            Electrode voltages (V), e.g., {"finger_gate_1": 0.5, "finger_gate_2": 1.0}
+            All electrodes must be specified
+
+        Returns
+        -------
+        phi_2d : np.ndarray
+            2D potential distribution (V) at z=z_position, shape=(nx, ny)
+
+        Raises
+        ------
+        ValueError
+            If voltage keys do not match electrode names
+
+        Examples
+        --------
+        >>> voltages = {"gate1": 0.5, "gate2": 1.0, "gate3": 0.5}
+        >>> phi = interpolator.interpolate(voltages)
+        >>> phi.shape
+        (100, 100)
+        """
+        # Validate voltage dictionary
+        voltage_keys = set(voltages.keys())
+        electrode_keys = set(self.electrode_names)
+
+        if voltage_keys != electrode_keys:
+            missing = electrode_keys - voltage_keys
+            extra = voltage_keys - electrode_keys
+            error_msg = "Voltage keys do not match electrode names.\n"
+            if missing:
+                error_msg += f"  Missing: {missing}\n"
+            if extra:
+                error_msg += f"  Extra: {extra}\n"
+            error_msg += f"  Expected: {electrode_keys}"
+            raise ValueError(error_msg)
+
+        # Start with particular solution
+        phi_2d = self.particular_potential.copy()
+
+        # Add contributions from each electrode
+        for i, electrode_name in enumerate(self.electrode_names):
+            V_i = voltages[electrode_name]
+            phi_2d += V_i * self.basis_potentials[i, :, :]
+
+        return phi_2d
+
+    def __call__(self, voltages: Dict[str, float]) -> np.ndarray:
+        """Convenience method for interpolation
+
+        Equivalent to calling interpolate(voltages).
+
+        Parameters
+        ----------
+        voltages : Dict[str, float]
+            Electrode voltages (V)
+
+        Returns
+        -------
+        phi_2d : np.ndarray
+            2D potential distribution (V) at z=z_position, shape=(nx, ny)
+
+        Examples
+        --------
+        >>> phi = interp({"gate1": 0.5, "gate2": 1.0})
+        """
+        return self.interpolate(voltages)
+
+    def save(self, filepath: str) -> None:
+        """Save interpolator state to NPZ file
+
+        Saves all necessary data for reconstruction without re-solving.
+
+        Parameters
+        ----------
+        filepath : str
+            Path to save file (.npz format)
+
+        Notes
+        -----
+        Use `PotentialInterpolator.load(filepath)` to reconstruct
+        """
+        np.savez(
+            filepath,
+            z_position=self.z_position,
+            z_index=self.z_index,
+            electrode_names=np.array(self.electrode_names, dtype=object),
+            basis_potentials=self.basis_potentials,
+            particular_potential=self.particular_potential,
+            x=self.x,
+            y=self.y,
+            nx=self.nx,
+            ny=self.ny,
+            nz=self.nz,
+        )
+        print(f"Interpolator saved to: {filepath}")
+
+    @classmethod
+    def load(cls, filepath: str) -> "PotentialInterpolator":
+        """Load interpolator from NPZ file
+
+        Parameters
+        ----------
+        filepath : str
+            Path to saved file (.npz format)
+
+        Returns
+        -------
+        interpolator : PotentialInterpolator
+            Reconstructed interpolator instance
+
+        Notes
+        -----
+        Creates a "skeleton" instance without StructureManager or PoissonSolver,
+        only for interpolation purposes. Cannot re-compute basis functions.
+        """
+        data = np.load(filepath, allow_pickle=True)
+
+        # Create empty instance (bypass __init__)
+        instance = cls.__new__(cls)
+
+        # Restore attributes
+        instance.z_position = float(data["z_position"])
+        instance.z_index = int(data["z_index"])
+        instance.electrode_names = list(data["electrode_names"])
+        instance.n_electrodes = len(instance.electrode_names)
+        instance.basis_potentials = data["basis_potentials"]
+        instance.particular_potential = data["particular_potential"]
+        instance.x = data["x"]
+        instance.y = data["y"]
+        instance.nx = int(data["nx"])
+        instance.ny = int(data["ny"])
+        instance.nz = int(data["nz"])
+
+        print(f"Interpolator loaded from: {filepath}")
+        print(f"  Electrodes: {instance.electrode_names}")
+        print(f"  z-position: {instance.z_position*1e9:.2f} nm (index={instance.z_index})")
+
+        return instance
+
+    def __repr__(self) -> str:
+        """String representation"""
+        return (
+            f"PotentialInterpolator(z_position={self.z_position*1e9:.2f} nm, "
+            f"z_index={self.z_index}, "
+            f"n_electrodes={self.n_electrodes}, "
+            f"grid=({self.nx}, {self.ny}))"
+        )

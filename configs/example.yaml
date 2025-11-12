@@ -36,21 +36,21 @@ electrodes:
     x_range: [10e-9, 30e-9]  # 10-30nm in x
     y_range: [0, 100e-9]     # Full width in y
     z_position: -5e-9        # Electrode bottom at z=-5nm (5nm thick: z=0 → z=-5nm)
-    voltage: -0.5            # -0.5V
+    voltage: 0.5            # -0.5V
 
   - name: "finger_gate_2"
     shape: "rectangle"
     x_range: [40e-9, 60e-9]
     y_range: [0, 100e-9]
     z_position: -5e-9        # Electrode bottom at z=-5nm
-    voltage: -1.0            # -1.0V
+    voltage: 1.0            # -1.0V
 
   - name: "finger_gate_3"
     shape: "rectangle"
     x_range: [70e-9, 90e-9]
     y_range: [0, 100e-9]
     z_position: -5e-9        # Electrode bottom at z=-5nm
-    voltage: -0.5            # -0.5V
+    voltage: 0.5            # -0.5V
 
 # Boundary conditions
 boundary_conditions:
