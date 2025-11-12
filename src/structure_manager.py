@@ -46,9 +46,6 @@ class StructureManager:
         # Charge density (nx, ny, nz)
         self.charge_density: Optional[np.ndarray] = None
 
-        # Material list for each z-layer
-        self.materials_list: Optional[List[Material]] = None
-
         if config_path is not None:
             self.load_from_yaml(config_path)
 
@@ -66,7 +63,9 @@ class StructureManager:
         # Extract settings and convert string numbers to float
         self.layers = self._convert_to_numeric(self.config.get("layers", []))
         self.electrodes = self._convert_to_numeric(self.config.get("electrodes", []))
-        self.boundary_conditions = self._convert_to_numeric(self.config.get("boundary_conditions", {}))
+        self.boundary_conditions = self._convert_to_numeric(
+            self.config.get("boundary_conditions", {})
+        )
         domain = self._convert_to_numeric(self.config.get("domain", {}))
 
         # Set computational domain
@@ -81,6 +80,8 @@ class StructureManager:
         self.ny = int(self.size_y / self.h) + 1
         self.nz = int(self.size_z / self.h) + 1
 
+        self._get_material_data(self.layers)
+
         # Initialize arrays
         self._initialize_arrays()
 
@@ -89,9 +90,6 @@ class StructureManager:
 
         # Generate permittivity distribution
         self.generate_epsilon_array()
-
-        # Generate materials list (one Material per z-layer)
-        self.generate_materials_list()
 
         # Generate electrode structure
         if self.electrodes:
@@ -126,6 +124,31 @@ class StructureManager:
                 return obj
         else:
             return obj
+
+    def _get_material_data(self, layers: List[Dict]) -> None:
+        """Fetch material data for each layer from database
+
+        Parameters
+        ----------
+        layers : List[Dict]
+            List of layer definitions from YAML
+        """
+        for layer in layers:
+            material_name = layer.get("material", "Unknown")
+            overrides = {}
+            for key in [
+                "epsilon_r",
+                "electron_affinity",
+                "band_gap",
+                "effective_mass_e",
+                "effective_mass_h",
+            ]:
+                if key in layer:
+                    overrides[key] = layer[key]
+
+            # Fetch material from database with overrides
+            mat = get_material(material_name, overrides if overrides else None)
+            layer["material_obj"] = mat  # Store Material object in layer
 
     def _initialize_arrays(self) -> None:
         """Initialize internal arrays
@@ -174,19 +197,19 @@ class StructureManager:
         # Check each layer
         for i, layer in enumerate(sorted_layers):
             z_range = layer.get("z_range", [0, 0])
-            material = layer.get("material", "Unknown")
+            layer_name = layer.get("name", "Unknown")
 
             # Check range validity (in new coordinate system z_range[0] > z_range[1])
             if z_range[0] <= z_range[1]:
                 raise ValueError(
-                    f"Layer '{material}': Invalid z_range {z_range}. "
+                    f"Layer '{layer_name}': Invalid z_range {z_range}. "
                     f"z_range must be [z_max, z_min] with z_max > z_min"
                 )
 
             # Check if within computational domain
             if z_range[0] > domain_z_top or z_range[1] < domain_z_bottom:
                 raise ValueError(
-                    f"Layer '{material}': z_range [{z_range[0] * 1e9:.2f}, {z_range[1] * 1e9:.2f}] nm "
+                    f"Layer '{layer_name}': z_range [{z_range[0] * 1e9:.2f}, {z_range[1] * 1e9:.2f}] nm "
                     f"is outside domain [{domain_z_top * 1e9:.2f}, {domain_z_bottom * 1e9:.2f}] nm"
                 )
 
@@ -201,14 +224,14 @@ class StructureManager:
                 if abs(gap) > 1e-12:
                     if gap > 0:
                         raise ValueError(
-                            f"Gap detected between layer '{material}' "
+                            f"Gap detected between layer '{layer_name}' "
                             f"(ends at {current_z_min * 1e9:.2f} nm) and "
                             f"next layer (starts at {next_z_max * 1e9:.2f} nm). "
                             f"Gap size: {gap * 1e9:.2f} nm"
                         )
                     else:
                         raise ValueError(
-                            f"Overlap detected between layer '{material}' "
+                            f"Overlap detected between layer '{layer_name}' "
                             f"(ends at {current_z_min * 1e9:.2f} nm) and "
                             f"next layer (starts at {next_z_max * 1e9:.2f} nm). "
                             f"Overlap size: {-gap * 1e9:.2f} nm"
@@ -242,9 +265,9 @@ class StructureManager:
 
         # Set permittivity for each layer
         for layer in self.layers:
-            # material = layer.get('material', 'Unknown')
             z_range = layer.get("z_range", [0, 0])  # [z_max, z_min] where z_max > z_min
-            epsilon_r = layer.get("epsilon_r", 1.0)
+            material_obj: Material = layer.get("material_obj")
+            epsilon_r = material_obj.epsilon_r if material_obj else 1.0
 
             # Convert z coordinate to k index
             # z = 0 -> k = 0 (surface)
@@ -262,59 +285,59 @@ class StructureManager:
 
         return self.epsilon_array
 
-    def generate_materials_list(self) -> List[Material]:
-        """Generate materials list for each z-layer
+    # def generate_materials_list(self) -> List[Material]:
+    #     """Generate materials list for each z-layer
 
-        Creates a list of Material objects, one for each z grid point.
-        Materials are assumed uniform in x-y plane at each z.
+    #     Creates a list of Material objects, one for each z grid point.
+    #     Materials are assumed uniform in x-y plane at each z.
 
-        Returns
-        -------
-        materials_list : List[Material]
-            List of Material objects, length=nz
-        """
-        materials_list = []
+    #     Returns
+    #     -------
+    #     materials_list : List[Material]
+    #         List of Material objects, length=nz
+    #     """
+    #     materials_list = []
 
-        # Process each z grid point
-        for k in range(self.nz):
-            # Convert k index to z coordinate
-            z_coord = -k * self.h  # z = -k * h (negative direction)
+    #     # Process each z grid point
+    #     for k in range(self.nz):
+    #         # Convert k index to z coordinate
+    #         z_coord = -k * self.h  # z = -k * h (negative direction)
 
-            # Find which layer this z coordinate belongs to
-            material_found = False
-            for layer in self.layers:
-                z_range = layer.get("z_range", [0, 0])  # [z_max, z_min]
-                z_max, z_min = z_range[0], z_range[1]
+    #         # Find which layer this z coordinate belongs to
+    #         material_found = False
+    #         for layer in self.layers:
+    #             z_range = layer.get("z_range", [0, 0])  # [z_max, z_min]
+    #             z_max, z_min = z_range[0], z_range[1]
 
-                # Check if z_coord is within this layer (with small tolerance)
-                if z_min - 1e-12 <= z_coord <= z_max + 1e-12:
-                    material_name = layer.get("material", "Unknown")
+    #             # Check if z_coord is within this layer (with small tolerance)
+    #             if z_min - 1e-12 <= z_coord <= z_max + 1e-12:
+    #                 material_name = layer.get("material", "Unknown")
 
-                    # Prepare overrides from YAML (if any)
-                    overrides = {}
-                    for key in [
-                        "epsilon_r",
-                        "electron_affinity",
-                        "band_gap",
-                        "effective_mass_e",
-                        "effective_mass_h",
-                    ]:
-                        if key in layer:
-                            overrides[key] = layer[key]
+    #                 # Prepare overrides from YAML (if any)
+    #                 overrides = {}
+    #                 for key in [
+    #                     "epsilon_r",
+    #                     "electron_affinity",
+    #                     "band_gap",
+    #                     "effective_mass_e",
+    #                     "effective_mass_h",
+    #                 ]:
+    #                     if key in layer:
+    #                         overrides[key] = layer[key]
 
-                    # Get material from database with overrides
-                    mat = get_material(material_name, overrides if overrides else None)
-                    materials_list.append(mat)
-                    material_found = True
-                    break
+    #                 # Get material from database with overrides
+    #                 mat = get_material(material_name, overrides if overrides else None)
+    #                 materials_list.append(mat)
+    #                 material_found = True
+    #                 break
 
-            if not material_found:
-                raise ValueError(
-                    f"No material found for z={z_coord * 1e9:.2f} nm (k={k})"
-                )
+    #         if not material_found:
+    #             raise ValueError(
+    #                 f"No material found for z={z_coord * 1e9:.2f} nm (k={k})"
+    #             )
 
-        self.materials_list = materials_list
-        return materials_list
+    #     self.materials_list = materials_list
+    #     return materials_list
 
     def generate_electrode_mask(self) -> np.ndarray:
         """Generate electrode mask
@@ -537,7 +560,8 @@ class StructureManager:
         for i, layer in enumerate(self.layers):
             material = layer.get("material", "Unknown")
             z_range = layer.get("z_range", [0, 0])
-            epsilon_r = layer.get("epsilon_r", 1.0)
+            material_obj: Material = layer.get("material_obj")
+            epsilon_r = material_obj.epsilon_r if material_obj else 1.0
             summary.append(
                 f"  {i + 1}. {material}: "
                 f"z=[{z_range[0] * 1e9:.1f}, {z_range[1] * 1e9:.1f}] nm, "
@@ -574,5 +598,4 @@ class StructureManager:
             "boundary_conditions": self.boundary_conditions,
             "electrode_mask": self.electrode_mask,
             "electrode_voltages": self.electrode_voltages,
-            "materials_list": self.materials_list,
         }

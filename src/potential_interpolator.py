@@ -67,8 +67,8 @@ class PotentialInterpolator:
         Convergence tolerance for PoissonSolver (default: 1e-6)
     max_iterations : int, optional
         Maximum iterations for PoissonSolver (default: 10000)
-    verbose : bool, optional
-        Print progress during basis computation (default: True)
+    verbose : int, optional
+        Print progress during basis computation (default: 1)
 
     Attributes
     ----------
@@ -126,7 +126,7 @@ class PotentialInterpolator:
         omega: float = 1.8,
         tolerance: float = 1e-6,
         max_iterations: int = 10000,
-        verbose: bool = True,
+        verbose: int = 1,
     ):
         # Import here to avoid circular dependency
         from structure_manager import StructureManager
@@ -186,9 +186,7 @@ class PotentialInterpolator:
             print(f"Computing basis functions for {self.n_electrodes} electrodes...")
 
         # Step 1: Compute particular solution (all electrodes at 0V, ρ≠0)
-        self._compute_particular_solution(
-            structure_manager, charge_density, verbose
-        )
+        self._compute_particular_solution(structure_manager, charge_density, verbose)
 
         # Step 2: Compute basis functions (one electrode at 1V, others at 0V, ρ=0)
         self._compute_basis_functions(structure_manager, verbose)
@@ -238,7 +236,7 @@ class PotentialInterpolator:
         self,
         structure_manager,
         charge_density: Optional[np.ndarray],
-        verbose: bool,
+        verbose: int,
     ) -> None:
         """Compute particular solution with all electrodes at 0V
 
@@ -248,7 +246,7 @@ class PotentialInterpolator:
             Structure manager (will be modified)
         charge_density : np.ndarray, optional
             Charge density (C/m³), shape=(nz, nx, ny)
-        verbose : bool
+        verbose : int
             Print progress
         """
         from poisson_solver import PoissonSolver
@@ -265,7 +263,8 @@ class PotentialInterpolator:
         solver = PoissonSolver(structure_manager.params, **self._solver_params)
 
         # Solve with charge density
-        result = solver.solve(rho=charge_density, verbose=False)
+        solver_verbose = verbose > 1
+        result = solver.solve(rho=charge_density, verbose=solver_verbose)
 
         if not result.info.get("converged", False):
             warnings.warn(
@@ -285,7 +284,7 @@ class PotentialInterpolator:
     def _compute_basis_functions(
         self,
         structure_manager,
-        verbose: bool,
+        verbose: int,
     ) -> None:
         """Compute basis functions for each electrode
 
@@ -295,7 +294,7 @@ class PotentialInterpolator:
         ----------
         structure_manager : StructureManager
             Structure manager (will be modified)
-        verbose : bool
+        verbose : int
             Print progress
         """
         from poisson_solver import PoissonSolver
@@ -318,7 +317,8 @@ class PotentialInterpolator:
             solver = PoissonSolver(structure_manager.params, **self._solver_params)
 
             # Solve with ρ=0 for exact linear decomposition
-            result = solver.solve(rho=None, verbose=False)
+            solver_verbose = verbose > 1
+            result = solver.solve(rho=None, verbose=solver_verbose)
 
             if not result.info.get("converged", False):
                 warnings.warn(

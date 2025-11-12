@@ -21,11 +21,13 @@ domain:
 # Material layer structure
 # z_range format: [z_max, z_min] where z_max > z_min
 layers:
-  - material: "SiO2"
+  - name: "SiO2_layer"
+    material: "SiO2"
     z_range: [0, -25e-9]  # 0nm → -25nm: Silicon oxide layer (surface side)
 
-  - material: "Si"
-    z_range: [-25e-9, -70e-9]  # -25nm → -70nm: Silicon substrate (bottom side)
+  - name: "Si_layer"
+    material: "Si"
+    z_range: [-25e-9, -80e-9]  # -25nm → -70nm: Silicon substrate (bottom side)
 
 # Electrode structure (multiple finger gates)
 # z_position: electrode bottom position (negative value)
