@@ -36,7 +36,7 @@ Example
 >>>
 >>> # Compute potential for specific voltages
 >>> voltages = {"finger_gate_1": 0.5, "finger_gate_2": 1.0, "finger_gate_3": 0.5}
->>> phi_2d = interp(voltages)  # Returns (nx, ny) array
+>>> pot_2d = interp(voltages)  # Returns (nx, ny) array
 """
 
 import numpy as np
@@ -101,7 +101,7 @@ class PotentialInterpolator:
     - Particular solution includes charge density effects
     - Computation time scales linearly with number of electrodes
     - For systems with many electrodes, consider saving/loading interpolator
-    - Use __call__ method for convenient interpolation: `phi = interp(voltages)`
+    - Use __call__ method for convenient interpolation: `pot_2d = interp(voltages)`
 
     Examples
     --------
@@ -114,10 +114,10 @@ class PotentialInterpolator:
     ... )
     >>>
     >>> # Option 1: Use __call__
-    >>> phi = interp({"gate1": 0.5, "gate2": 1.0})
+    >>> pot_2d = interp({"gate1": 0.5, "gate2": 1.0})
     >>>
     >>> # Option 2: Use interpolate method
-    >>> phi = interp.interpolate({"gate1": 0.5, "gate2": 1.0})
+    >>> pot_2d = interp.interpolate({"gate1": 0.5, "gate2": 1.0})
     """
 
     def __init__(
@@ -352,7 +352,7 @@ class PotentialInterpolator:
 
         Returns
         -------
-        phi_2d : np.ndarray
+        pot_2d : np.ndarray
             2D potential distribution (V) at z=z_position, shape=(nx, ny)
 
         Raises
@@ -363,8 +363,8 @@ class PotentialInterpolator:
         Examples
         --------
         >>> voltages = {"gate1": 0.5, "gate2": 1.0, "gate3": 0.5}
-        >>> phi = interpolator.interpolate(voltages)
-        >>> phi.shape
+        >>> pot_2d = interpolator.interpolate(voltages)
+        >>> pot_2d.shape
         (100, 100)
         """
         # Validate voltage dictionary
@@ -383,14 +383,14 @@ class PotentialInterpolator:
             raise ValueError(error_msg)
 
         # Start with particular solution
-        phi_2d = self.particular_potential.copy()
+        pot_2d = self.particular_potential.copy()
 
         # Add contributions from each electrode
         for i, electrode_name in enumerate(self.electrode_names):
             V_i = voltages[electrode_name]
-            phi_2d += V_i * self.basis_potentials[i, :, :]
+            pot_2d += V_i * self.basis_potentials[i, :, :]
 
-        return phi_2d
+        return pot_2d
 
     def __call__(self, voltages: Dict[str, float]) -> np.ndarray:
         """Convenience method for interpolation
@@ -404,12 +404,12 @@ class PotentialInterpolator:
 
         Returns
         -------
-        phi_2d : np.ndarray
+        pot_2d : np.ndarray
             2D potential distribution (V) at z=z_position, shape=(nx, ny)
 
         Examples
         --------
-        >>> phi = interp({"gate1": 0.5, "gate2": 1.0})
+        >>> pot_2d = interp({"gate1": 0.5, "gate2": 1.0})
         """
         return self.interpolate(voltages)
 
