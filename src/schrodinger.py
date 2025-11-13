@@ -27,7 +27,7 @@ class SchrodingerSolver2D:
     Parameters
     ----------
     potential : np.ndarray
-        2D potential energy array, shape (nx, ny), units: Volts
+        2D potential energy array, shape (nx, ny), units: eV
     dx : float
         Grid spacing in x direction, units: meters
     dy : float
@@ -79,8 +79,7 @@ class SchrodingerSolver2D:
         self.dy = dy
         self.effective_mass = effective_mass
 
-        # Convert potential from Volts to Joules (for electron: E = q*V)
-        self.potential = elementary_charge * potential
+        self.potential = potential  # [eV]
 
         # Hamiltonian will be built on demand
         self._hamiltonian = None
@@ -182,6 +181,9 @@ class SchrodingerSolver2D:
         scipy.sparse.csr_matrix
             Sparse Hamiltonian matrix
         """
+        # Potential energy in Joules (convert from eV)
+        V_joules = self.potential * elementary_charge
+
         # Interior grid dimensions (excluding boundaries)
         nx_int = self.nx - 2
         ny_int = self.ny - 2
@@ -198,7 +200,7 @@ class SchrodingerSolver2D:
         coeff_diag = 2 * coeff_xx + 2 * coeff_yy
 
         # Extract interior potential (exclude boundaries)
-        V_interior = self.potential[1:-1, 1:-1].flatten()
+        V_interior = V_joules[1:-1, 1:-1].flatten()
 
         # Diagonal: kinetic energy (diagonal part) + potential
         diagonal = coeff_diag + V_interior
@@ -285,9 +287,7 @@ class SchrodingerSolver2D:
         """
         return np.abs(psi) ** 2
 
-    def compute_expectation_value(
-        self, psi: np.ndarray, operator: np.ndarray
-    ) -> float:
+    def compute_expectation_value(self, psi: np.ndarray, operator: np.ndarray) -> float:
         """
         Compute expectation value <ψ|Ô|ψ> for a diagonal operator.
 
@@ -327,7 +327,7 @@ class SchrodingerSolver2D:
         """
         np.savez(
             filepath,
-            potential=self.potential / elementary_charge,  # Convert back to Volts
+            potential=self.potential,  # Save in eV
             dx=self.dx,
             dy=self.dy,
             effective_mass=self.effective_mass,

@@ -44,7 +44,9 @@ class SolverResult:
     x: np.ndarray
     y: np.ndarray
     z: np.ndarray
-    materials: Optional[List]  # List of Material objects, one per z-layer (None if not provided)
+    materials: Optional[
+        List
+    ]  # List of Material objects, one per z-layer (None if not provided)
     info: Dict
 
     def __post_init__(self):
@@ -138,6 +140,16 @@ class SolverResult:
 
         return Ev
 
+    @property
+    def Ec(self) -> np.ndarray:
+        """Conduction band edge (eV), shape=(nz, nx, ny)"""
+        return self.compute_Ec()
+
+    @property
+    def Ev(self) -> np.ndarray:
+        """Valence band edge (eV), shape=(nz, nx, ny)"""
+        return self.compute_Ev()
+
     def get_band_diagram_1d(
         self, x_idx: Optional[int] = None, y_idx: Optional[int] = None
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
@@ -171,9 +183,9 @@ class SolverResult:
 
         # Validate indices
         if not (0 <= x_idx < nx):
-            raise ValueError(f"x_idx={x_idx} out of range [0, {nx-1}]")
+            raise ValueError(f"x_idx={x_idx} out of range [0, {nx - 1}]")
         if not (0 <= y_idx < ny):
-            raise ValueError(f"y_idx={y_idx} out of range [0, {ny-1}]")
+            raise ValueError(f"y_idx={y_idx} out of range [0, {ny - 1}]")
 
         # Compute band edges
         Ec_full = self.compute_Ec()

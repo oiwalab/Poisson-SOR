@@ -61,6 +61,8 @@ class PotentialInterpolator:
     charge_density : np.ndarray, optional
         Charge density distribution (C/m³), shape=(nz, nx, ny)
         Used only for particular solution computation
+    carrier_type : str, optional
+        "electron" or "hole" to define potential sign convention (default: "electron")
     omega : float, optional
         SOR relaxation parameter for PoissonSolver (default: 1.8)
     tolerance : float, optional
@@ -123,6 +125,7 @@ class PotentialInterpolator:
         structure_manager,  # StructureManager type
         z_position: float,
         charge_density: Optional[np.ndarray] = None,
+        carrier_type: str = "electron",
         omega: float = 1.8,
         tolerance: float = 1e-6,
         max_iterations: int = 10000,
@@ -151,7 +154,7 @@ class PotentialInterpolator:
         # Store z information
         self.z_position = actual_z  # Use actual grid point
         self.z_index = z_index
-
+        self.carrier_type = carrier_type
         # Check that electrodes exist
         if not structure_manager.electrodes:
             raise ValueError("Structure has no electrodes defined")
@@ -273,7 +276,10 @@ class PotentialInterpolator:
             )
 
         # Extract 2D slice at z_index
-        self.particular_potential = result.phi[self.z_index, :, :]
+        if self.carrier_type == "electron":
+            self.particular_potential = result.Ec[self.z_index, :, :]
+        else:
+            self.particular_potential = result.Ev[self.z_index, :, :]
 
         if verbose:
             print(
@@ -327,7 +333,10 @@ class PotentialInterpolator:
                 )
 
             # Extract 2D slice at z_index
-            self.basis_potentials[i, :, :] = result.phi[self.z_index, :, :]
+            if self.carrier_type == "electron":
+                self.basis_potentials[i, :, :] = result.Ec[self.z_index, :, :]
+            else:
+                self.basis_potentials[i, :, :] = result.Ev[self.z_index, :, :]
 
     def interpolate(self, voltages: Dict[str, float]) -> np.ndarray:
         """Compute 2D potential at z_position for given electrode voltages
@@ -422,6 +431,7 @@ class PotentialInterpolator:
             filepath,
             z_position=self.z_position,
             z_index=self.z_index,
+            carrier_type=self.carrier_type,
             electrode_names=np.array(self.electrode_names, dtype=object),
             basis_potentials=self.basis_potentials,
             particular_potential=self.particular_potential,
@@ -460,6 +470,7 @@ class PotentialInterpolator:
         # Restore attributes
         instance.z_position = float(data["z_position"])
         instance.z_index = int(data["z_index"])
+        instance.carrier_type = str(data["carrier_type"])
         instance.electrode_names = list(data["electrode_names"])
         instance.n_electrodes = len(instance.electrode_names)
         instance.basis_potentials = data["basis_potentials"]
@@ -475,6 +486,7 @@ class PotentialInterpolator:
         print(
             f"  z-position: {instance.z_position * 1e9:.2f} nm (index={instance.z_index})"
         )
+        print(f"  carrier_type: {instance.carrier_type}")
 
         return instance
 
@@ -485,4 +497,5 @@ class PotentialInterpolator:
             f"z_index={self.z_index}, "
             f"n_electrodes={self.n_electrodes}, "
             f"grid=({self.nx}, {self.ny}))"
+            f"carrier_type={self.carrier_type}"
         )
