@@ -420,3 +420,39 @@ def plot_band_diagram_1d(
         print(f"Saved: {save_path}")
 
     plt.show()
+
+
+# ===========================================================================
+# Wavefunction Visualization
+# ===========================================================================
+
+
+def plot_wavefunction(
+    wavefunction,
+    x,
+    y,
+    title='Wavefunction ψ(x,y)',
+    cmap='RdBu',
+    ax=None,
+    colorbar=True,
+    save_path=None,
+):
+    import matplotlib.pyplot as plt
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(8, 6))
+    else:
+        fig = ax.get_figure()
+    psi_plot = wavefunction.real
+    X, Y = np.meshgrid(x * 1e9, y * 1e9, indexing='ij')
+    im = ax.pcolormesh(X, Y, psi_plot, cmap=cmap, shading='auto')
+    if colorbar:
+        cbar = fig.colorbar(im, ax=ax)
+        cbar.set_label('ψ (a.u.)')
+    ax.set_xlabel('x (nm)')
+    ax.set_ylabel('y (nm)')
+    ax.set_title(title)
+    ax.set_aspect('equal')
+    if save_path:
+        fig.savefig(save_path, dpi=150, bbox_inches='tight')
+        print(f'Saved: {save_path}')
+    return ax

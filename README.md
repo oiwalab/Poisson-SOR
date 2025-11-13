@@ -16,7 +16,8 @@ This solver solves the Poisson equation $-\nabla \cdot (\varepsilon \nabla \phi)
 - **Fast Interpolation**: Linear interpolation for rapid potential computation at different voltages
 - **Time-Dependent Potential**: Dynamic gate voltage control with analytical or discrete time functions
 - **Animation**: Create animations of time-varying potential distributions
-- **Visualization**: Potential distribution, band diagrams, convergence history
+- **Schrödinger Solver**: 2D wavefunction computation using finite difference method
+- **Visualization**: Potential distribution, band diagrams, convergence history, wavefunctions
 - **YAML Configuration**: Human-readable structure definitions
 
 ## Requirements
@@ -150,6 +151,49 @@ Time-dependent calculation:
 ```
 This allows O(1) computation for any time point after initial basis setup.
 
+### Quantum Wavefunction Calculation
+
+Solve 2D Schrödinger equation for quantum confined systems:
+
+```python
+from schrodinger import SchrodingerSolver2D
+from scipy.constants import electron_mass
+
+# Get 2D potential from interpolator (or create your own)
+V_2d = interp(voltages)  # Returns potential in Volts
+
+# Solve for wavefunctions
+m_eff = 0.19 * electron_mass  # Si effective mass (kg)
+solver = SchrodingerSolver2D(
+    V_2d,
+    dx=interp.dx,
+    dy=interp.dy,
+    effective_mass=m_eff
+)
+
+energies, psi = solver.solve(n_states=5)
+
+# Energy spacing (important for quantum dots)
+E_spacing = energies[1:] - energies[0]
+print(f"Ground state: {energies[0]:.4f} eV")
+print(f"Excited state spacing: {E_spacing * 1000:.2f} meV")
+
+# Probability density
+prob_density = solver.compute_probability_density(psi[0])
+```
+
+**Features:**
+- **Finite difference method**: 5-point stencil, vectorized Hamiltonian construction
+- **Sparse eigenvalue solver**: `scipy.sparse.linalg.eigsh` for efficient computation
+- **Dirichlet boundary conditions**: ψ = 0 at boundaries
+- **Normalized wavefunctions**: ∫|ψ|²dxdy = 1
+- **Save/load**: Solver state can be saved to `.npz` files
+
+**Typical parameters (Si quantum dot):**
+- Effective mass: `m* = 0.19 * electron_mass`
+- Grid: 100×100, spacing 1 nm
+- Energy scale: 10-100 meV
+
 ## Configuration File
 
 Define structures in YAML format ([configs/example.yaml](configs/example.yaml)):
@@ -232,6 +276,7 @@ uv run jupyter notebook examples/tutorial.ipynb
 │   ├── solver_result.py            # Results container with band structure
 │   ├── potential_interpolator.py   # Fast voltage interpolation
 │   ├── time_dependent_potential.py # Time-dependent voltage dynamics
+│   ├── schrodinger.py              # 2D Schrödinger equation solver
 │   └── visualizer.py               # Visualization utilities
 ├── configs/
 │   └── example.yaml                # Example configuration (Si/SiO2 with finger gates)
@@ -245,7 +290,8 @@ uv run jupyter notebook examples/tutorial.ipynb
 │   ├── test_structure_manager.py   # Structure manager tests
 │   ├── test_solver.py              # Solver tests with physics validation
 │   ├── test_interpolator.py       # Interpolation tests (17 tests)
-│   └── test_time_dependent.py     # Time-dependent tests (15 tests)
+│   ├── test_time_dependent.py     # Time-dependent tests (15 tests)
+│   └── test_schrodinger.py         # Schrödinger solver tests (12 tests)
 └── README.md
 ```
 
@@ -275,6 +321,7 @@ Test results (as of latest commit):
 - `test_solver.py`: Physics-based solver validation (parallel plate, point charge, band bending)
 - `test_interpolator.py`: 17 tests covering initialization, interpolation, accuracy, save/load (2.5s runtime)
 - `test_time_dependent.py`: 15 tests covering voltage functions, time-dependent computation, accuracy (11s runtime)
+- `test_schrodinger.py`: 12 tests covering 2D harmonic oscillator, particle-in-box, normalization, orthogonality, save/load (0.5s runtime)
 
 ## Development
 
@@ -402,6 +449,60 @@ anim = td_pot.animate(
     fps=30,
     show_voltages=True
 )
+```
+
+#### `SchrodingerSolver2D`
+2D Schrödinger equation solver using finite difference method.
+
+```python
+from schrodinger import SchrodingerSolver2D
+from scipy.constants import electron_mass
+
+solver = SchrodingerSolver2D(
+    potential,           # (nx, ny) array in Volts
+    dx,                  # Grid spacing in x (m)
+    dy,                  # Grid spacing in y (m)
+    effective_mass       # Effective mass (kg), e.g., 0.19 * electron_mass for Si
+)
+
+# Solve for lowest energy eigenstates
+energies, wavefunctions = solver.solve(n_states=5)
+# energies: (n_states,) in eV
+# wavefunctions: (n_states, nx, ny), normalized: ∫|ψ|²dxdy = 1
+
+# Wavefunction operations
+psi_norm = solver.normalize_wavefunction(psi)
+prob_density = solver.compute_probability_density(psi)  # |ψ|²
+expectation = solver.compute_expectation_value(psi, operator)  # <ψ|Ô|ψ>
+
+# Save/load
+solver.save("solver.npz")
+solver = SchrodingerSolver2D.load("solver.npz")
+```
+
+**Physical equation:**
+```
+-ℏ²/(2m*) ∇²ψ + V(x,y)ψ = Eψ
+```
+
+**Numerical method:**
+- 5-point stencil finite difference (2nd order accuracy)
+- Vectorized sparse matrix construction
+- `scipy.sparse.linalg.eigsh` for efficient eigenvalue computation
+- Dirichlet boundary conditions: ψ = 0 at boundaries
+
+**Typical use case (Si quantum dot):**
+```python
+# Get potential from PotentialInterpolator
+V_2d = interp({"gate1": 0.5, "gate2": 1.0})
+
+# Solve Schrödinger equation
+m_eff = 0.19 * electron_mass  # Si
+solver = SchrodingerSolver2D(V_2d, interp.dx, interp.dy, m_eff)
+energies, psi = solver.solve(n_states=3)
+
+print(f"Ground state: {energies[0]:.4f} eV")
+print(f"Level spacing: {(energies[1] - energies[0]) * 1000:.2f} meV")
 ```
 
 ### Material Database
