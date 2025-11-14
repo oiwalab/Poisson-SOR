@@ -46,6 +46,8 @@ class StructureManager:
         # Charge density (nx, ny, nz)
         self.charge_density: Optional[np.ndarray] = None
 
+        self.materials_list: Optional[List[Material]] = None
+
         if config_path is not None:
             self.load_from_yaml(config_path)
 
@@ -87,6 +89,8 @@ class StructureManager:
 
         # Validate layer structure
         self._validate_layers()
+
+        self.generate_materials_list()
 
         # Generate permittivity distribution
         self.generate_epsilon_array()
@@ -285,59 +289,59 @@ class StructureManager:
 
         return self.epsilon_array
 
-    # def generate_materials_list(self) -> List[Material]:
-    #     """Generate materials list for each z-layer
+    def generate_materials_list(self) -> List[Material]:
+        """Generate materials list for each z-layer
 
-    #     Creates a list of Material objects, one for each z grid point.
-    #     Materials are assumed uniform in x-y plane at each z.
+        Creates a list of Material objects, one for each z grid point.
+        Materials are assumed uniform in x-y plane at each z.
 
-    #     Returns
-    #     -------
-    #     materials_list : List[Material]
-    #         List of Material objects, length=nz
-    #     """
-    #     materials_list = []
+        Returns
+        -------
+        materials_list : List[Material]
+            List of Material objects, length=nz
+        """
+        materials_list = []
 
-    #     # Process each z grid point
-    #     for k in range(self.nz):
-    #         # Convert k index to z coordinate
-    #         z_coord = -k * self.h  # z = -k * h (negative direction)
+        # Process each z grid point
+        for k in range(self.nz):
+            # Convert k index to z coordinate
+            z_coord = -k * self.h  # z = -k * h (negative direction)
 
-    #         # Find which layer this z coordinate belongs to
-    #         material_found = False
-    #         for layer in self.layers:
-    #             z_range = layer.get("z_range", [0, 0])  # [z_max, z_min]
-    #             z_max, z_min = z_range[0], z_range[1]
+            # Find which layer this z coordinate belongs to
+            material_found = False
+            for layer in self.layers:
+                z_range = layer.get("z_range", [0, 0])  # [z_max, z_min]
+                z_max, z_min = z_range[0], z_range[1]
 
-    #             # Check if z_coord is within this layer (with small tolerance)
-    #             if z_min - 1e-12 <= z_coord <= z_max + 1e-12:
-    #                 material_name = layer.get("material", "Unknown")
+                # Check if z_coord is within this layer (with small tolerance)
+                if z_min - 1e-12 <= z_coord <= z_max + 1e-12:
+                    material_name = layer.get("material", "Unknown")
 
-    #                 # Prepare overrides from YAML (if any)
-    #                 overrides = {}
-    #                 for key in [
-    #                     "epsilon_r",
-    #                     "electron_affinity",
-    #                     "band_gap",
-    #                     "effective_mass_e",
-    #                     "effective_mass_h",
-    #                 ]:
-    #                     if key in layer:
-    #                         overrides[key] = layer[key]
+                    # Prepare overrides from YAML (if any)
+                    overrides = {}
+                    for key in [
+                        "epsilon_r",
+                        "electron_affinity",
+                        "band_gap",
+                        "effective_mass_e",
+                        "effective_mass_h",
+                    ]:
+                        if key in layer:
+                            overrides[key] = layer[key]
 
-    #                 # Get material from database with overrides
-    #                 mat = get_material(material_name, overrides if overrides else None)
-    #                 materials_list.append(mat)
-    #                 material_found = True
-    #                 break
+                    # Get material from database with overrides
+                    mat = get_material(material_name, overrides if overrides else None)
+                    materials_list.append(mat)
+                    material_found = True
+                    break
 
-    #         if not material_found:
-    #             raise ValueError(
-    #                 f"No material found for z={z_coord * 1e9:.2f} nm (k={k})"
-    #             )
+            if not material_found:
+                raise ValueError(
+                    f"No material found for z={z_coord * 1e9:.2f} nm (k={k})"
+                )
 
-    #     self.materials_list = materials_list
-    #     return materials_list
+        self.materials_list = materials_list
+        return materials_list
 
     def generate_electrode_mask(self) -> np.ndarray:
         """Generate electrode mask
@@ -598,4 +602,5 @@ class StructureManager:
             "boundary_conditions": self.boundary_conditions,
             "electrode_mask": self.electrode_mask,
             "electrode_voltages": self.electrode_voltages,
+            "materials_list": self.materials_list,
         }

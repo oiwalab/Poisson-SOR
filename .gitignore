@@ -12,3 +12,9 @@ wheels/
 
 results/*
 profiling/results/*
+
+# Data files
+*.npy
+*.npz
+*.png
+*.gif

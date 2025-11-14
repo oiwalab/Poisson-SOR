@@ -171,6 +171,12 @@ class PotentialInterpolator:
         self.x = x_coords
         self.y = y_coords
 
+        # Store grid spacing and domain size
+        self.dx = structure_manager.h  # Grid spacing (isotropic)
+        self.dy = structure_manager.h
+        self.Lx = structure_manager.size_x
+        self.Ly = structure_manager.size_y
+
         # Store original electrode voltages for restoration
         self._original_voltages = [e["voltage"] for e in structure_manager.electrodes]
 
