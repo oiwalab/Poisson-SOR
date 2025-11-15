@@ -31,7 +31,7 @@ def main():
 
     # ソルバの初期化
     print("\n[2] Initializing solver...")
-    solver = PoissonSolver(manager.params, max_iterations=1000)
+    solver = PoissonSolver(manager, max_iterations=1000)
 
     print(f"  Grid size: ({manager.nx}, {manager.ny}, {manager.nz})")
     print(f"  Omega: {solver.omega}")
@@ -110,14 +110,13 @@ def main():
     )
 
     # Band diagram (1D, z-direction at center)
-    if result.materials is not None:
-        print("  - Band diagram (1D, z-direction)")
-        vis.plot_band_diagram_1d(
-            result=result,
-            x_idx=None,  # Use center
-            y_idx=None,  # Use center
-            save_path=str(figures_dir / "band_diagram_1d.png"),
-        )
+    print("  - Band diagram (1D, z-direction)")
+    vis.plot_band_diagram_1d(
+        result=result,
+        x_idx=None,  # Use center
+        y_idx=None,  # Use center
+        save_path=str(figures_dir / "band_diagram_1d.png"),
+    )
 
     print("\n" + "=" * 60)
     print("All tasks completed.")

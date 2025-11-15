@@ -32,7 +32,7 @@ def run_solver():
 
     # Initialize solver
     print("\n[2] Initializing solver...")
-    solver = PoissonSolver(manager.params, max_iterations=1000)
+    solver = PoissonSolver(manager, max_iterations=1000)
 
     print(f"  Grid size: ({manager.nx}, {manager.ny}, {manager.nz})")
     print(f"  Omega: {solver.omega}")
@@ -41,16 +41,16 @@ def run_solver():
 
     # Solve Poisson equation
     print("\n[3] Solving Poisson equation...")
-    phi, info = solver.solve(rho=manager.charge_density)
+    result = solver.solve(rho=manager.charge_density)
 
     # Display results
     print("\n[4] Results:")
-    print(f"  Converged: {info['converged']}")
-    print(f"  Iterations: {info['iterations']}")
-    print(f"  Final φ change: {info['final_phi_change']:.2e}")
-    print(f"  Potential range: [{phi.min():.4f}, {phi.max():.4f}] V")
+    print(f"  Converged: {result.info['converged']}")
+    print(f"  Iterations: {result.info['iterations']}")
+    print(f"  Final φ change: {result.info['final_phi_change']:.2e}")
+    print(f"  Potential range: [{result.phi.min():.4f}, {result.phi.max():.4f}] V")
 
-    return phi, info
+    return result
 
 
 def main():
@@ -61,7 +61,7 @@ def main():
     # Run with profiling
     print("Starting profiling...\n")
     profiler.enable()
-    phi, info = run_solver()
+    result = run_solver()
     profiler.disable()
 
     # Save profile results with timestamp

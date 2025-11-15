@@ -14,6 +14,28 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from poisson_solver import PoissonSolver
 
 
+class MockStructureManager:
+    """Mock StructureManager for testing PoissonSolver"""
+
+    def __init__(self, epsilon_array, h, boundary_conditions, electrode_mask=None, electrode_voltages=None):
+        self.epsilon_array = epsilon_array
+        self.nz, self.nx, self.ny = epsilon_array.shape
+        self.h = h
+        self.boundary_conditions = boundary_conditions
+        self.electrode_mask = electrode_mask
+        self.electrode_voltages = electrode_voltages
+        self.size_x = self.nx * h
+        self.size_y = self.ny * h
+        self.size_z = self.nz * h
+
+    def get_grid_coordinates(self):
+        """Get grid coordinates"""
+        x = np.arange(self.nx) * self.h
+        y = np.arange(self.ny) * self.h
+        z = -np.arange(self.nz) * self.h
+        return x, y, z
+
+
 def test_uniform_dielectric_neumann():
     """Test with uniform dielectric and Neumann boundary conditions
 
@@ -34,16 +56,16 @@ def test_uniform_dielectric_neumann():
         "y_sides": {"type": "neumann", "value": 0.0},
     }
 
+    # Create mock structure manager
+    structure = MockStructureManager(
+        epsilon_array=epsilon,
+        h=h,
+        boundary_conditions=boundary_conditions,
+    )
+
     # Initialize solver
-    params = {
-        "epsilon": epsilon,
-        "grid_spacing": h,
-        "boundary_conditions": boundary_conditions,
-        "electrode_mask": None,
-        "electrode_voltages": None,
-    }
     solver = PoissonSolver(
-        params,
+        structure,
         omega=1.5,
         tolerance=1e-6,
         max_iterations=1000,
@@ -85,16 +107,16 @@ def test_parallel_plate_capacitor():
         "y_sides": {"type": "neumann", "value": 0.0},
     }
 
+    # Create mock structure manager
+    structure = MockStructureManager(
+        epsilon_array=epsilon,
+        h=h,
+        boundary_conditions=boundary_conditions,
+    )
+
     # Initialize solver
-    params = {
-        "epsilon": epsilon,
-        "grid_spacing": h,
-        "boundary_conditions": boundary_conditions,
-        "electrode_mask": None,
-        "electrode_voltages": None,
-    }
     solver = PoissonSolver(
-        params,
+        structure,
         omega=1.5,
         tolerance=1e-8,
         max_iterations=5000,
@@ -174,16 +196,18 @@ def test_electrode_volume():
         "y_sides": {"type": "neumann", "value": 0.0},
     }
 
+    # Create mock structure manager
+    structure = MockStructureManager(
+        epsilon_array=epsilon,
+        h=h,
+        boundary_conditions=boundary_conditions,
+        electrode_mask=electrode_mask,
+        electrode_voltages=electrode_voltages,
+    )
+
     # Initialize solver
-    params = {
-        "epsilon": epsilon,
-        "grid_spacing": h,
-        "boundary_conditions": boundary_conditions,
-        "electrode_mask": electrode_mask,
-        "electrode_voltages": electrode_voltages,
-    }
     solver = PoissonSolver(
-        params,
+        structure,
         omega=1.8,
         tolerance=1e-6,
         max_iterations=10000,
@@ -244,16 +268,16 @@ def test_point_charge():
         "y_sides": {"type": "dirichlet", "value": 0.0},
     }
 
+    # Create mock structure manager
+    structure = MockStructureManager(
+        epsilon_array=epsilon,
+        h=h,
+        boundary_conditions=boundary_conditions,
+    )
+
     # Initialize solver
-    params = {
-        "epsilon": epsilon,
-        "grid_spacing": h,
-        "boundary_conditions": boundary_conditions,
-        "electrode_mask": None,
-        "electrode_voltages": None,
-    }
     solver = PoissonSolver(
-        params,
+        structure,
         omega=1.5,
         tolerance=1e-10,
         max_iterations=20000,
@@ -410,9 +434,8 @@ def test_band_bending_si_sio2():
         structure.load_from_yaml(config_file)
 
         # Create solver
-        params = structure.params
         solver = PoissonSolver(
-            params,
+            structure,
             omega=config_dict["solver"]["omega"],
             tolerance=config_dict["solver"]["tolerance"],
             max_iterations=config_dict["solver"]["max_iterations"],
@@ -425,10 +448,10 @@ def test_band_bending_si_sio2():
         from solver_result import SolverResult
         assert isinstance(result, SolverResult), "Result should be SolverResult object"
 
-        # Test 2: Check that materials are available
-        assert result.materials is not None, "Materials list should be available"
-        assert len(result.materials) == result.nz, (
-            f"Materials list length {len(result.materials)} should match nz={result.nz}"
+        # Test 2: Check that structure is available
+        assert result.structure is not None, "Structure should be available"
+        assert result.structure.nz == result.nz, (
+            f"Structure nz {result.structure.nz} should match result nz={result.nz}"
         )
 
         # Test 3: Check array shapes
@@ -444,7 +467,8 @@ def test_band_bending_si_sio2():
 
         # Test 4: Check Ec - Ev = Eg at all points
         for k in range(result.nz):
-            Eg_expected = result.materials[k].band_gap
+            mat = result.structure.get_material_at_z(k)
+            Eg_expected = mat.band_gap
             Eg_computed = Ec[k, :, :] - Ev[k, :, :]
 
             assert np.allclose(Eg_computed, Eg_expected, atol=1e-10), (
@@ -453,7 +477,7 @@ def test_band_bending_si_sio2():
             )
 
         # Test 5: Check different band parameters in Si and SiO2 regions
-        material_names = [mat.name for mat in result.materials]
+        material_names = [result.structure.get_material_at_z(k).name for k in range(result.nz)]
 
         # Find SiO2 and Si layer indices
         sio2_indices = [i for i, name in enumerate(material_names) if name == "SiO2"]
@@ -463,14 +487,14 @@ def test_band_bending_si_sio2():
         assert len(si_indices) > 0, "Should have Si layers"
 
         # Check band gap values
-        sio2_Eg = result.materials[sio2_indices[0]].band_gap
-        si_Eg = result.materials[si_indices[0]].band_gap
+        sio2_Eg = result.structure.get_material_at_z(sio2_indices[0]).band_gap
+        si_Eg = result.structure.get_material_at_z(si_indices[0]).band_gap
 
         assert sio2_Eg > si_Eg, f"SiO2 band gap {sio2_Eg}eV should be > Si {si_Eg}eV"
 
         # Check electron affinity values
-        sio2_chi = result.materials[sio2_indices[0]].electron_affinity
-        si_chi = result.materials[si_indices[0]].electron_affinity
+        sio2_chi = result.structure.get_material_at_z(sio2_indices[0]).electron_affinity
+        si_chi = result.structure.get_material_at_z(si_indices[0]).electron_affinity
 
         assert si_chi > sio2_chi, (
             f"Si electron affinity {si_chi}eV should be > SiO2 {sio2_chi}eV"

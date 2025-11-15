@@ -80,10 +80,15 @@ class PotentialInterpolator:
         Grid index corresponding to z_position
     electrode_names : List[str]
         Ordered list of electrode names
-    basis_potentials : np.ndarray
-        Basis functions (n_electrodes, nx, ny) at z=z_position, computed with ρ=0
-    particular_potential : np.ndarray
-        Particular solution (nx, ny) at z=z_position with all V=0, ρ≠0
+    basis_phi : np.ndarray
+        Basis functions φ (n_electrodes, nx, ny) at z=z_position, computed with ρ=0
+    particular_band_edge : np.ndarray
+        Particular solution as band edge (Ec or Ev in eV) (nx, ny) at z=z_position
+        Computed from φ_particular with all V=0, ρ≠0
+    electron_affinity : float
+        Electron affinity χ (eV) at z=z_position
+    band_gap : float
+        Band gap Eg (eV) at z=z_position
     x : np.ndarray
         x-coordinates (m), shape=(nx,)
     y : np.ndarray
@@ -187,9 +192,16 @@ class PotentialInterpolator:
             "max_iterations": max_iterations,
         }
 
-        # Initialize arrays for basis functions
-        self.basis_potentials = np.zeros((self.n_electrodes, self.nx, self.ny))
-        self.particular_potential = np.zeros((self.nx, self.ny))
+        # Store material parameters at z_index for band edge conversion
+        material_at_z = structure_manager.get_material_at_z(z_index)
+        self.electron_affinity = material_at_z.electron_affinity  # eV
+        self.band_gap = material_at_z.band_gap  # eV
+
+        # Initialize arrays:
+        # - basis_phi: electrostatic potential φ for linear superposition
+        # - particular_band_edge: pre-computed band edge (Ec or Ev) for efficiency
+        self.basis_phi = np.zeros((self.n_electrodes, self.nx, self.ny))
+        self.particular_band_edge = np.zeros((self.nx, self.ny))
 
         if verbose:
             print(f"Computing basis functions for {self.n_electrodes} electrodes...")
@@ -269,7 +281,7 @@ class PotentialInterpolator:
         structure_manager.get_electrode_voltages()
 
         # Create solver with current electrode configuration
-        solver = PoissonSolver(structure_manager.params, **self._solver_params)
+        solver = PoissonSolver(structure_manager, **self._solver_params)
 
         # Solve with charge density
         solver_verbose = verbose > 1
@@ -281,11 +293,15 @@ class PotentialInterpolator:
                 f"iterations={result.info.get('iterations', 0)}"
             )
 
-        # Extract 2D slice at z_index
+        # Extract 2D slice and convert to band edge immediately (computed once)
+        # This avoids repeated conversion during interpolation
+        phi_2d = result.phi[self.z_index, :, :]
         if self.carrier_type == "electron":
-            self.particular_potential = result.Ec[self.z_index, :, :]
-        else:
-            self.particular_potential = result.Ev[self.z_index, :, :]
+            # Ec = -φ - χ
+            self.particular_band_edge = -phi_2d - self.electron_affinity
+        else:  # hole
+            # Ev = -φ - χ - Eg
+            self.particular_band_edge = -phi_2d - self.electron_affinity - self.band_gap
 
         if verbose:
             print(
@@ -326,7 +342,7 @@ class PotentialInterpolator:
             structure_manager.get_electrode_voltages()
 
             # Create solver with current electrode configuration
-            solver = PoissonSolver(structure_manager.params, **self._solver_params)
+            solver = PoissonSolver(structure_manager, **self._solver_params)
 
             # Solve with ρ=0 for exact linear decomposition
             solver_verbose = verbose > 1
@@ -338,17 +354,18 @@ class PotentialInterpolator:
                     f"iterations={result.info.get('iterations', 0)}"
                 )
 
-            # Extract 2D slice at z_index
-            if self.carrier_type == "electron":
-                self.basis_potentials[i, :, :] = result.Ec[self.z_index, :, :]
-            else:
-                self.basis_potentials[i, :, :] = result.Ev[self.z_index, :, :]
+            # Extract 2D slice of electrostatic potential φ at z_index
+            # Store φ directly without conversion to Ec/Ev (conversion happens in interpolate())
+            self.basis_phi[i, :, :] = result.phi[self.z_index, :, :]
 
     def interpolate(self, voltages: Dict[str, float]) -> np.ndarray:
-        """Compute 2D potential at z_position for given electrode voltages
+        """Compute 2D band edge at z_position for given electrode voltages
 
-        Uses linear superposition:
-            φ = φ_particular + Σᵢ Vᵢ·φᵢ
+        Uses optimized linear superposition:
+            Band_edge = Band_edge_particular - Σᵢ Vᵢ·φᵢ
+
+        where Band_edge_particular is pre-computed (Ec or Ev) and φᵢ are basis potentials.
+        The negative sign comes from: Ec = -φ - χ, so ΔEc = -Δφ
 
         Parameters
         ----------
@@ -358,8 +375,9 @@ class PotentialInterpolator:
 
         Returns
         -------
-        pot_2d : np.ndarray
-            2D potential distribution (V) at z=z_position, shape=(nx, ny)
+        band_edge_2d : np.ndarray
+            2D band edge distribution (eV) at z=z_position, shape=(nx, ny)
+            Returns Ec for electrons, Ev for holes
 
         Raises
         ------
@@ -369,8 +387,8 @@ class PotentialInterpolator:
         Examples
         --------
         >>> voltages = {"gate1": 0.5, "gate2": 1.0, "gate3": 0.5}
-        >>> pot_2d = interpolator.interpolate(voltages)
-        >>> pot_2d.shape
+        >>> Ec_2d = interpolator.interpolate(voltages)  # Returns Ec if carrier_type="electron"
+        >>> Ec_2d.shape
         (100, 100)
         """
         # Validate voltage dictionary
@@ -388,15 +406,16 @@ class PotentialInterpolator:
             error_msg += f"  Expected: {electrode_keys}"
             raise ValueError(error_msg)
 
-        # Start with particular solution
-        pot_2d = self.particular_potential.copy()
+        # Start with pre-computed band edge (particular solution)
+        band_edge_2d = self.particular_band_edge.copy()
 
         # Add contributions from each electrode
+        # Note: Ec = -φ - χ, so when φ increases by Vᵢ·φᵢ, Ec decreases by Vᵢ·φᵢ
         for i, electrode_name in enumerate(self.electrode_names):
             V_i = voltages[electrode_name]
-            pot_2d += V_i * self.basis_potentials[i, :, :]
+            band_edge_2d -= V_i * self.basis_phi[i, :, :]
 
-        return pot_2d
+        return band_edge_2d
 
     def __call__(self, voltages: Dict[str, float]) -> np.ndarray:
         """Convenience method for interpolation
@@ -432,6 +451,8 @@ class PotentialInterpolator:
         Notes
         -----
         Use `PotentialInterpolator.load(filepath)` to reconstruct
+        Material parameters (electron_affinity, band_gap) are not saved since
+        particular_band_edge is already computed.
         """
         np.savez(
             filepath,
@@ -439,8 +460,8 @@ class PotentialInterpolator:
             z_index=self.z_index,
             carrier_type=self.carrier_type,
             electrode_names=np.array(self.electrode_names, dtype=object),
-            basis_potentials=self.basis_potentials,
-            particular_potential=self.particular_potential,
+            basis_phi=self.basis_phi,
+            particular_band_edge=self.particular_band_edge,
             x=self.x,
             y=self.y,
             nx=self.nx,
@@ -467,6 +488,7 @@ class PotentialInterpolator:
         -----
         Creates a "skeleton" instance without StructureManager or PoissonSolver,
         only for interpolation purposes. Cannot re-compute basis functions.
+        Material parameters are not loaded since they're not needed for interpolation.
         """
         data = np.load(filepath, allow_pickle=True)
 
@@ -479,8 +501,8 @@ class PotentialInterpolator:
         instance.carrier_type = str(data["carrier_type"])
         instance.electrode_names = list(data["electrode_names"])
         instance.n_electrodes = len(instance.electrode_names)
-        instance.basis_potentials = data["basis_potentials"]
-        instance.particular_potential = data["particular_potential"]
+        instance.basis_phi = data["basis_phi"]
+        instance.particular_band_edge = data["particular_band_edge"]
         instance.x = data["x"]
         instance.y = data["y"]
         instance.nx = int(data["nx"])

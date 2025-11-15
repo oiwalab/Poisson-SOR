@@ -55,8 +55,8 @@ class TestPotentialInterpolatorInit:
         assert 0 <= interp.z_index < manager.nz
         assert interp.n_electrodes == 2  # test_config_small.yaml has 2 electrodes
         assert interp.electrode_names == ["gate_left", "gate_right"]
-        assert interp.basis_potentials.shape == (2, manager.nx, manager.ny)
-        assert interp.particular_potential.shape == (manager.nx, manager.ny)
+        assert interp.basis_phi.shape == (2, manager.nx, manager.ny)
+        assert interp.particular_band_edge.shape == (manager.nx, manager.ny)
 
     def test_init_at_surface(self, structure_manager):
         """Test initialization at surface (z=0)"""
@@ -103,8 +103,8 @@ class TestPotentialInterpolatorInit:
             manager, z_position=-10e-9, charge_density=rho, verbose=False
         )
 
-        # Particular potential should be non-zero
-        assert np.max(np.abs(interp.particular_potential)) > 1e-10
+        # Particular band edge should be non-zero
+        assert np.max(np.abs(interp.particular_band_edge)) > 1e-10
 
 
 class TestPotentialInterpolatorInterpolation:
@@ -119,11 +119,11 @@ class TestPotentialInterpolatorInterpolation:
         )
 
         voltages = {"gate_left": 0.0, "gate_right": 0.0}
-        phi = interp.interpolate(voltages)
+        band_edge = interp.interpolate(voltages)
 
-        # Should equal particular solution (which is zero for ρ=0)
-        assert phi.shape == (manager.nx, manager.ny)
-        np.testing.assert_allclose(phi, interp.particular_potential, atol=1e-10)
+        # Should equal particular solution (already as band edge)
+        assert band_edge.shape == (manager.nx, manager.ny)
+        np.testing.assert_allclose(band_edge, interp.particular_band_edge, atol=1e-10)
 
     def test_interpolate_single_electrode(self, structure_manager):
         """Test interpolation with single electrode at 1V"""
@@ -135,14 +135,15 @@ class TestPotentialInterpolatorInterpolation:
 
         # Only first electrode at 1V
         voltages = {"gate_left": 1.0, "gate_right": 0.0}
-        phi = interp.interpolate(voltages)
+        band_edge = interp.interpolate(voltages)
 
-        # Should equal particular + first basis function
-        expected = interp.particular_potential + interp.basis_potentials[0]
-        np.testing.assert_allclose(phi, expected, atol=1e-10)
+        # Should equal particular_band_edge - 1.0 * basis_phi[0]
+        # (Note: negative sign because Ec = -φ - χ, so ΔEc = -Δφ)
+        expected_band_edge = interp.particular_band_edge - 1.0 * interp.basis_phi[0]
+        np.testing.assert_allclose(band_edge, expected_band_edge, atol=1e-10)
 
     def test_linearity_scaling(self, structure_manager):
-        """Test linearity: φ(2V) = 2·φ(1V) for single electrode"""
+        """Test linearity: Ec(2V) scaling for single electrode"""
         manager = structure_manager
 
         interp = PotentialInterpolator(
@@ -151,23 +152,25 @@ class TestPotentialInterpolatorInterpolation:
 
         # Compute for 1V
         voltages_1V = {"gate_left": 1.0, "gate_right": 0.0}
-        phi_1V = interp(voltages_1V)
+        Ec_1V = interp(voltages_1V)
 
         # Compute for 2V
         voltages_2V = {"gate_left": 2.0, "gate_right": 0.0}
-        phi_2V = interp(voltages_2V)
+        Ec_2V = interp(voltages_2V)
 
-        # Check linearity (accounting for particular solution)
-        expected = interp.particular_potential + 2.0 * interp.basis_potentials[0]
-        np.testing.assert_allclose(phi_2V, expected, atol=1e-10)
+        # Check linearity: Ec(2V) = Ec_particular - 2.0 * φ_basis[0]
+        expected_Ec = interp.particular_band_edge - 2.0 * interp.basis_phi[0]
+        np.testing.assert_allclose(Ec_2V, expected_Ec, atol=1e-10)
+
+        # Also verify linearity: Ec(2V) - Ec_particular = 2 * (Ec(1V) - Ec_particular)
         np.testing.assert_allclose(
-            phi_2V - interp.particular_potential,
-            2.0 * (phi_1V - interp.particular_potential),
+            Ec_2V - interp.particular_band_edge,
+            2.0 * (Ec_1V - interp.particular_band_edge),
             atol=1e-10
         )
 
     def test_superposition(self, structure_manager):
-        """Test superposition principle"""
+        """Test superposition principle for band edges"""
         manager = structure_manager
 
         interp = PotentialInterpolator(
@@ -177,16 +180,17 @@ class TestPotentialInterpolatorInterpolation:
         # Compute individual solutions
         V1 = {"gate_left": 0.5, "gate_right": 0.0}
         V2 = {"gate_left": 0.0, "gate_right": 1.0}
-        phi_1 = interp(V1)
-        phi_2 = interp(V2)
+        Ec_1 = interp(V1)
+        Ec_2 = interp(V2)
 
         # Compute combined solution
         V_combined = {"gate_left": 0.5, "gate_right": 1.0}
-        phi_combined = interp(V_combined)
+        Ec_combined = interp(V_combined)
 
-        # Check superposition (need to subtract particular solution to avoid double counting)
-        expected = phi_1 + phi_2 - interp.particular_potential
-        np.testing.assert_allclose(phi_combined, expected, atol=1e-10)
+        # Check superposition (need to add particular solution back to avoid double subtraction)
+        # Ec(V1+V2) = Ec(V1) + Ec(V2) - Ec_particular
+        expected = Ec_1 + Ec_2 - interp.particular_band_edge
+        np.testing.assert_allclose(Ec_combined, expected, atol=1e-10)
 
     def test_call_method(self, structure_manager):
         """Test __call__ method is equivalent to interpolate"""
@@ -240,39 +244,48 @@ class TestPotentialInterpolatorAccuracy:
     """Test accuracy by comparing with direct solver"""
 
     def test_accuracy_vs_direct_solve(self, structure_manager):
-        """Compare interpolation with direct Poisson solver"""
+        """Compare interpolation with direct Poisson solver
+
+        PotentialInterpolator with carrier_type='electron' returns Ec, not phi
+        """
         manager = structure_manager
 
-        # Create interpolator
+        # Create interpolator (carrier_type='electron' is default, returns Ec)
         interp = PotentialInterpolator(
-            manager, z_position=-10e-9, **SOLVER_PARAMS, verbose=False
+            manager, z_position=-10e-9, carrier_type="electron",
+            **SOLVER_PARAMS, verbose=False
         )
 
         # Test voltages
         test_voltages = {"gate_left": 0.5, "gate_right": 1.0}
 
-        # Get interpolated result
-        phi_interp = interp(test_voltages)
+        # Get interpolated result (returns Ec for electrons)
+        Ec_interp = interp(test_voltages)
 
         # Solve directly with same voltages
         for i, (name, voltage) in enumerate(test_voltages.items()):
             manager.electrodes[i]["voltage"] = voltage
         manager.get_electrode_voltages()
 
-        solver = PoissonSolver(manager.params, **SOLVER_PARAMS)
+        solver = PoissonSolver(manager, **SOLVER_PARAMS)
         result_direct = solver.solve(rho=None, verbose=False)
-        phi_direct = result_direct.phi[interp.z_index, :, :]
+        Ec_direct = result_direct.Ec[interp.z_index, :, :]  # Get Ec, not phi
 
         # Should be very close (within solver tolerance)
         # Looser tolerance due to iterative solver convergence differences
-        np.testing.assert_allclose(phi_interp, phi_direct, atol=1e-5, rtol=1e-5)
+        np.testing.assert_allclose(Ec_interp, Ec_direct, atol=1e-5, rtol=1e-5)
 
     def test_accuracy_different_voltages(self, structure_manager):
-        """Test accuracy for different voltage combinations"""
+        """Test accuracy for different voltage combinations
+
+        PotentialInterpolator with carrier_type='electron' returns Ec, not phi
+        """
         manager = structure_manager
 
+        # Create interpolator (carrier_type='electron' is default, returns Ec)
         interp = PotentialInterpolator(
-            manager, z_position=-10e-9, **SOLVER_PARAMS, verbose=False
+            manager, z_position=-10e-9, carrier_type="electron",
+            **SOLVER_PARAMS, verbose=False
         )
 
         # Test multiple voltage combinations
@@ -284,21 +297,21 @@ class TestPotentialInterpolatorAccuracy:
         ]
 
         for voltages in voltage_sets:
-            # Interpolated result
-            phi_interp = interp(voltages)
+            # Interpolated result (returns Ec for electrons)
+            Ec_interp = interp(voltages)
 
             # Direct solve
             for i, (name, voltage) in enumerate(voltages.items()):
                 manager.electrodes[i]["voltage"] = voltage
             manager.get_electrode_voltages()
 
-            solver = PoissonSolver(manager.params, **SOLVER_PARAMS)
+            solver = PoissonSolver(manager, **SOLVER_PARAMS)
             result_direct = solver.solve(rho=None, verbose=False)
-            phi_direct = result_direct.phi[interp.z_index, :, :]
+            Ec_direct = result_direct.Ec[interp.z_index, :, :]  # Get Ec, not phi
 
             # Compare (looser tolerance due to solver convergence)
             np.testing.assert_allclose(
-                phi_interp, phi_direct, atol=1e-5, rtol=1e-5,
+                Ec_interp, Ec_direct, atol=1e-5, rtol=1e-5,
                 err_msg=f"Failed for voltages: {voltages}"
             )
 
@@ -333,10 +346,10 @@ class TestPotentialInterpolatorSaveLoad:
             np.testing.assert_array_equal(interp_loaded.x, interp_original.x)
             np.testing.assert_array_equal(interp_loaded.y, interp_original.y)
             np.testing.assert_array_equal(
-                interp_loaded.basis_potentials, interp_original.basis_potentials
+                interp_loaded.basis_phi, interp_original.basis_phi
             )
             np.testing.assert_array_equal(
-                interp_loaded.particular_potential, interp_original.particular_potential
+                interp_loaded.particular_band_edge, interp_original.particular_band_edge
             )
 
         finally:

@@ -4,9 +4,12 @@ Solves Poisson equation -∇⋅(ε∇φ)=ρ for systems with non-uniform permitt
 """
 
 import numpy as np
-from typing import Dict, Optional
+from typing import Dict, Optional, TYPE_CHECKING
 from numba import njit
 from solver_result import SolverResult
+
+if TYPE_CHECKING:
+    from structure_manager import StructureManager
 
 
 class PoissonSolver:
@@ -16,13 +19,8 @@ class PoissonSolver:
 
     Parameters
     ----------
-    params : Dict
-        Dictionary containing:
-        - epsilon: np.ndarray - Permittivity distribution (nz, nx, ny)
-        - grid_spacing: float - Grid spacing h (m)
-        - boundary_conditions: Dict - Boundary condition settings
-        - electrode_mask: Optional[np.ndarray] - Electrode mask
-        - electrode_voltages: Optional[np.ndarray] - Electrode voltages
+    structure : StructureManager
+        Structure manager containing all structure information
     omega : float, optional
         SOR relaxation parameter (1 < omega < 2), default=1.8
     tolerance : float, optional
@@ -33,25 +31,25 @@ class PoissonSolver:
 
     def __init__(
         self,
-        params: Dict,
+        structure: "StructureManager",
         omega: float = 1.8,
         tolerance: float = 1e-6,
         max_iterations: int = 10000,
     ):
-        self.epsilon = params["epsilon"]
+        self.structure = structure
+
+        # Frequently accessed data (stored locally for performance)
+        self.epsilon = structure.epsilon_array
         self.nz, self.nx, self.ny = self.epsilon.shape  # Array shape: (nz, nx, ny)
-        self.h = params["grid_spacing"]  # Isotropic grid spacing
-        self.boundary_conditions = params["boundary_conditions"]
+        self.h = structure.h  # Isotropic grid spacing
+        self.boundary_conditions = structure.boundary_conditions
+        self.electrode_mask = structure.electrode_mask
+        self.electrode_voltages = structure.electrode_voltages
+
+        # Solver parameters
         self.omega = omega
         self.tolerance = tolerance
         self.max_iterations = max_iterations
-
-        # Electrode mask and voltages
-        self.electrode_mask = params.get("electrode_mask")
-        self.electrode_voltages = params.get("electrode_voltages")
-
-        # Materials list (one per z-layer)
-        self.materials_list = params.get("materials_list")
 
         # Vacuum permittivity (F/m)
         self.epsilon_0 = 8.854187817e-12
@@ -158,20 +156,12 @@ class PoissonSolver:
         Returns
         -------
         result : SolverResult
-            SolverResult object with phi, coordinates, materials, and info
+            SolverResult object with phi, structure reference, and info
         """
-        # Generate coordinate arrays
-        x = np.arange(self.nx) * self.h
-        y = np.arange(self.ny) * self.h
-        z = -np.arange(self.nz) * self.h  # z = -k * h (negative direction)
-
-        # Create SolverResult
+        # Create SolverResult with structure reference
         result = SolverResult(
             phi=phi,
-            x=x,
-            y=y,
-            z=z,
-            materials=self.materials_list,
+            structure=self.structure,
             info=info,
         )
 

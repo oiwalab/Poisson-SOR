@@ -287,10 +287,10 @@ def test_electrode_no_overlap():
         Path(temp_file).unlink()
 
 
-def test_params_property():
-    """Test params property returns correct dictionary for PoissonSolver
+def test_material_data_efficiency():
+    """Test that material data is stored efficiently
 
-    Verifies that params property contains all required keys for PoissonSolver initialization
+    Verifies that unique_materials and material_indices are properly generated
     """
     config = {
         "domain": {
@@ -298,17 +298,8 @@ def test_params_property():
             "grid_spacing": 10e-9,
         },
         "layers": [
-            {"material": "Si", "z_range": [0, -100e-9], "epsilon_r": 11.7},
-        ],
-        "electrodes": [
-            {
-                "name": "gate1",
-                "shape": "rectangle",
-                "x_range": [10e-9, 30e-9],
-                "y_range": [10e-9, 30e-9],
-                "z_position": -10e-9,
-                "voltage": -0.5,
-            },
+            {"material": "SiO2", "z_range": [0, -50e-9], "epsilon_r": 3.9},
+            {"material": "Si", "z_range": [-50e-9, -100e-9], "epsilon_r": 11.7},
         ],
         "boundary_conditions": {
             "z_top": {"type": "neumann", "value": 0.0},
@@ -324,31 +315,25 @@ def test_params_property():
 
     try:
         manager = StructureManager(temp_file)
-        params = manager.params
 
-        # Check params is a dictionary
-        assert isinstance(params, dict), "params should be a dictionary"
+        # Should have only 2 unique materials despite 11 z-layers
+        assert len(manager.unique_materials) == 2, (
+            f"Should have 2 unique materials, got {len(manager.unique_materials)}"
+        )
 
-        # Check required keys exist
-        required_keys = ["epsilon", "grid_spacing", "boundary_conditions", "electrode_mask", "electrode_voltages"]
-        for key in required_keys:
-            assert key in params, f"params should contain '{key}'"
+        # Should have material indices for all z-layers
+        assert manager.material_indices.shape == (11,), (
+            f"Should have 11 material indices, got shape {manager.material_indices.shape}"
+        )
 
-        # Check epsilon
-        assert params["epsilon"] is not None
-        assert params["epsilon"].shape == (11, 11, 11)
+        # Check that material indices reference correct materials
+        # Layers 0-4 should be SiO2 (index 0 or 1)
+        # Layers 5-10 should be Si (index 0 or 1)
+        mat_at_z0 = manager.get_material_at_z(0)
+        mat_at_z10 = manager.get_material_at_z(10)
 
-        # Check grid_spacing
-        assert isinstance(params["grid_spacing"], float)
-        assert params["grid_spacing"] == 10e-9
-
-        # Check boundary_conditions
-        assert isinstance(params["boundary_conditions"], dict)
-        assert "z_top" in params["boundary_conditions"]
-
-        # Check electrode_mask and electrode_voltages
-        assert params["electrode_mask"] is not None
-        assert params["electrode_voltages"] is not None
+        assert mat_at_z0.name == "SiO2", f"Material at z=0 should be SiO2, got {mat_at_z0.name}"
+        assert mat_at_z10.name == "Si", f"Material at z=10 should be Si, got {mat_at_z10.name}"
 
     finally:
         Path(temp_file).unlink()

@@ -1,12 +1,14 @@
 """Solver result container with band structure information
 
-Stores potential and materials, computes band edges on demand
+Stores potential and structure reference, computes band edges on demand
 """
 
 import numpy as np
 from dataclasses import dataclass
-from typing import Dict, Optional, Tuple, List
-from pathlib import Path
+from typing import Dict, Optional, Tuple, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from structure_manager import StructureManager
 
 
 @dataclass
@@ -17,15 +19,8 @@ class SolverResult:
     ----------
     phi : np.ndarray
         Electrostatic potential distribution (V), shape=(nz, nx, ny)
-    x : np.ndarray
-        x-coordinates (m), shape=(nx,)
-    y : np.ndarray
-        y-coordinates (m), shape=(ny,)
-    z : np.ndarray
-        z-coordinates (m), shape=(nz,)
-    materials : List[Material]
-        Material objects for each z-layer, length=nz
-        Assumes materials are uniform in x-y plane at each z
+    structure : StructureManager
+        Structure manager containing grid coordinates and material information
     info : Dict
         Convergence information (converged, iterations, final_phi_change)
 
@@ -41,36 +36,18 @@ class SolverResult:
     """
 
     phi: np.ndarray
-    x: np.ndarray
-    y: np.ndarray
-    z: np.ndarray
-    materials: Optional[
-        List
-    ]  # List of Material objects, one per z-layer (None if not provided)
+    structure: "StructureManager"
     info: Dict
 
     def __post_init__(self):
-        """Validate array shapes and materials list"""
+        """Validate array shapes"""
         nz, nx, ny = self.phi.shape
 
-        # Check coordinate array shapes
-        if self.x.shape != (nx,):
+        # Check structure dimensions match phi
+        if self.structure.nz != nz or self.structure.nx != nx or self.structure.ny != ny:
             raise ValueError(
-                f"x coordinate shape {self.x.shape} does not match nx={nx}"
-            )
-        if self.y.shape != (ny,):
-            raise ValueError(
-                f"y coordinate shape {self.y.shape} does not match ny={ny}"
-            )
-        if self.z.shape != (nz,):
-            raise ValueError(
-                f"z coordinate shape {self.z.shape} does not match nz={nz}"
-            )
-
-        # Check materials list length (if provided)
-        if self.materials is not None and len(self.materials) != nz:
-            raise ValueError(
-                f"materials list length {len(self.materials)} does not match nz={nz}"
+                f"Structure dimensions ({self.structure.nz}, {self.structure.nx}, {self.structure.ny}) "
+                f"do not match phi shape ({nz}, {nx}, {ny})"
             )
 
     def compute_Ec(self) -> np.ndarray:
@@ -81,27 +58,18 @@ class SolverResult:
         Ec : np.ndarray
             Conduction band edge (eV), shape=(nz, nx, ny)
 
-        Raises
-        ------
-        ValueError
-            If materials list is not available
-
         Notes
         -----
         Ec(r) = -q·φ(r) - χ(z) [eV]
         where φ is in V, χ is in eV
         Unit conversion: q·φ [J] / q [C] = φ [V] → φ [eV] (numerically equal)
         """
-        if self.materials is None:
-            raise ValueError(
-                "Materials list is not available. Cannot compute band edges."
-            )
-
         nz, nx, ny = self.phi.shape
         Ec = np.zeros((nz, nx, ny))
 
         for k in range(nz):
-            chi = self.materials[k].electron_affinity  # eV
+            mat = self.structure.get_material_at_z(k)
+            chi = mat.electron_affinity  # eV
             # φ [V] is numerically equal to q·φ [eV]
             Ec[k, :, :] = -self.phi[k, :, :] - chi
 
@@ -115,27 +83,18 @@ class SolverResult:
         Ev : np.ndarray
             Valence band edge (eV), shape=(nz, nx, ny)
 
-        Raises
-        ------
-        ValueError
-            If materials list is not available
-
         Notes
         -----
         Ev(r) = Ec(r) - Eg(z) [eV]
         where Eg(z) is band gap at each z-layer
         """
-        if self.materials is None:
-            raise ValueError(
-                "Materials list is not available. Cannot compute band edges."
-            )
-
         Ec = self.compute_Ec()
         nz, nx, ny = self.phi.shape
         Ev = np.zeros((nz, nx, ny))
 
         for k in range(nz):
-            Eg = self.materials[k].band_gap  # eV
+            mat = self.structure.get_material_at_z(k)
+            Eg = mat.band_gap  # eV
             Ev[k, :, :] = Ec[k, :, :] - Eg
 
         return Ev
@@ -149,6 +108,24 @@ class SolverResult:
     def Ev(self) -> np.ndarray:
         """Valence band edge (eV), shape=(nz, nx, ny)"""
         return self.compute_Ev()
+
+    @property
+    def x(self) -> np.ndarray:
+        """x-coordinates (m), shape=(nx,)"""
+        x, _, _ = self.structure.get_grid_coordinates()
+        return x
+
+    @property
+    def y(self) -> np.ndarray:
+        """y-coordinates (m), shape=(ny,)"""
+        _, y, _ = self.structure.get_grid_coordinates()
+        return y
+
+    @property
+    def z(self) -> np.ndarray:
+        """z-coordinates (m), shape=(nz,)"""
+        _, _, z = self.structure.get_grid_coordinates()
+        return z
 
     def get_band_diagram_1d(
         self, x_idx: Optional[int] = None, y_idx: Optional[int] = None
@@ -191,13 +168,15 @@ class SolverResult:
         Ec_full = self.compute_Ec()
         Ev_full = self.compute_Ev()
 
+        # Get z-coordinates from structure
+        _, _, z = self.structure.get_grid_coordinates()
+
         # Extract 1D slices
-        z_slice = self.z
         Ec_slice = Ec_full[:, x_idx, y_idx]
         Ev_slice = Ev_full[:, x_idx, y_idx]
         phi_slice = self.phi[:, x_idx, y_idx]
 
-        return z_slice, Ec_slice, Ev_slice, phi_slice
+        return z, Ec_slice, Ev_slice, phi_slice
 
     def save(self, filepath: str) -> None:
         """Save solver result to file
@@ -209,41 +188,31 @@ class SolverResult:
 
         Notes
         -----
-        Material objects are saved as material names and parameters
-        to enable reconstruction
+        Saves phi and convergence info. Structure information is not saved.
+        To reconstruct full result, the original StructureManager is needed.
         """
-        # Extract material parameters for each z-layer
-        material_names = [mat.name for mat in self.materials]
-        epsilon_r_list = [mat.epsilon_r for mat in self.materials]
-        chi_list = [mat.electron_affinity for mat in self.materials]
-        Eg_list = [mat.band_gap for mat in self.materials]
-
         # Save to file
         np.savez(
             filepath,
             phi=self.phi,
-            x=self.x,
-            y=self.y,
-            z=self.z,
-            material_names=material_names,
-            epsilon_r=epsilon_r_list,
-            electron_affinity=chi_list,
-            band_gap=Eg_list,
             converged=self.info.get("converged", False),
             iterations=self.info.get("iterations", 0),
             final_phi_change=self.info.get("final_phi_change", 0.0),
         )
 
         print(f"Solver result saved to: {filepath}")
+        print("Note: Structure information not saved. Original StructureManager needed for reconstruction.")
 
     @classmethod
-    def load(cls, filepath: str) -> "SolverResult":
+    def load(cls, filepath: str, structure: "StructureManager") -> "SolverResult":
         """Load solver result from file
 
         Parameters
         ----------
         filepath : str
             Path to saved file (.npz format)
+        structure : StructureManager
+            Structure manager (must match the one used when saving)
 
         Returns
         -------
@@ -252,33 +221,12 @@ class SolverResult:
 
         Notes
         -----
-        Reconstructs Material objects from saved parameters
+        Requires the original StructureManager to reconstruct the full result
         """
-        from materials import Material
-
         data = np.load(filepath, allow_pickle=True)
 
         # Load arrays
         phi = data["phi"]
-        x = data["x"]
-        y = data["y"]
-        z = data["z"]
-        material_names = data["material_names"]
-        epsilon_r = data["epsilon_r"]
-        electron_affinity = data["electron_affinity"]
-        band_gap = data["band_gap"]
-
-        # Reconstruct materials list (one per z-layer)
-        nz = phi.shape[0]
-        materials = []
-        for k in range(nz):
-            mat = Material(
-                name=str(material_names[k]),
-                epsilon_r=float(epsilon_r[k]),
-                electron_affinity=float(electron_affinity[k]),
-                band_gap=float(band_gap[k]),
-            )
-            materials.append(mat)
 
         # Reconstruct info dict
         info = {
@@ -289,10 +237,7 @@ class SolverResult:
 
         return cls(
             phi=phi,
-            x=x,
-            y=y,
-            z=z,
-            materials=materials,
+            structure=structure,
             info=info,
         )
 

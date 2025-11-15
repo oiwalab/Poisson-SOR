@@ -46,7 +46,9 @@ class StructureManager:
         # Charge density (nx, ny, nz)
         self.charge_density: Optional[np.ndarray] = None
 
-        self.materials_list: Optional[List[Material]] = None
+        # Material data (efficient storage)
+        self.unique_materials: List[Material] = []  # Unique materials only
+        self.material_indices: Optional[np.ndarray] = None  # Index array (nz,)
 
         if config_path is not None:
             self.load_from_yaml(config_path)
@@ -82,15 +84,14 @@ class StructureManager:
         self.ny = int(self.size_y / self.h) + 1
         self.nz = int(self.size_z / self.h) + 1
 
-        self._get_material_data(self.layers)
-
         # Initialize arrays
         self._initialize_arrays()
 
         # Validate layer structure
         self._validate_layers()
 
-        self.generate_materials_list()
+        # Generate material data (unique materials + indices)
+        self.generate_materials_data()
 
         # Generate permittivity distribution
         self.generate_epsilon_array()
@@ -129,30 +130,98 @@ class StructureManager:
         else:
             return obj
 
-    def _get_material_data(self, layers: List[Dict]) -> None:
-        """Fetch material data for each layer from database
+    def generate_materials_data(self) -> Tuple[List[Material], np.ndarray]:
+        """Generate unique materials and index mapping
 
-        Parameters
-        ----------
-        layers : List[Dict]
-            List of layer definitions from YAML
+        Creates efficient material storage:
+        - unique_materials: List of unique Material objects only
+        - material_indices: Array mapping each z-layer to material index
+
+        Returns
+        -------
+        unique_materials : List[Material]
+            List of unique Material objects
+        material_indices : np.ndarray
+            Index array mapping z-layer to material, shape=(nz,), dtype=int
+
+        Notes
+        -----
+        This is much more efficient than storing nz Material objects.
+        For example, with 3 layers across 100 z-points:
+        - Old: 100 Material objects
+        - New: 3 Material objects + 100 integers
         """
-        for layer in layers:
-            material_name = layer.get("material", "Unknown")
-            overrides = {}
-            for key in [
-                "epsilon_r",
-                "electron_affinity",
-                "band_gap",
-                "effective_mass_e",
-                "effective_mass_h",
-            ]:
-                if key in layer:
-                    overrides[key] = layer[key]
+        unique_materials = []
+        material_map = {}  # key: (material_name, overrides_tuple) -> index
+        material_indices = np.zeros(self.nz, dtype=int)
 
-            # Fetch material from database with overrides
-            mat = get_material(material_name, overrides if overrides else None)
-            layer["material_obj"] = mat  # Store Material object in layer
+        for k in range(self.nz):
+            z_coord = -k * self.h
+
+            # Find which layer this z coordinate belongs to
+            # Convention: z_min < z <= z_max (upper layer includes boundary)
+            # Exception: Bottom-most layer includes both boundaries
+            material_found = False
+            for i, layer in enumerate(self.layers):
+                z_range = layer.get("z_range", [0, 0])
+                z_max, z_min = z_range[0], z_range[1]
+
+                # Check if this is the bottom-most layer
+                is_bottom_layer = (i == len(self.layers) - 1)
+
+                # Upper layer includes upper boundary, excludes lower boundary
+                # Bottom layer includes both boundaries
+                # Tolerance for numerical errors (1e-15 for float64 precision)
+                if is_bottom_layer:
+                    # Bottom layer: z_min <= z <= z_max
+                    if z_min - 1e-15 <= z_coord <= z_max + 1e-15:
+                        material_found = True
+                else:
+                    # Other layers: z_min < z <= z_max
+                    if z_min + 1e-15 < z_coord <= z_max + 1e-15:
+                        material_found = True
+
+                if material_found:
+                    material_name = layer.get("material", "Unknown")
+
+                    # Collect overrides from YAML
+                    overrides = {}
+                    for key in [
+                        "epsilon_r",
+                        "electron_affinity",
+                        "band_gap",
+                        "effective_mass_e",
+                        "effective_mass_h",
+                    ]:
+                        if key in layer:
+                            overrides[key] = layer[key]
+
+                    # Create unique key for this material configuration
+                    override_key = tuple(sorted(overrides.items()))
+                    mat_key = (material_name, override_key)
+
+                    # Check if this material configuration already exists
+                    if mat_key not in material_map:
+                        # Create new unique material
+                        mat = get_material(
+                            material_name, overrides if overrides else None
+                        )
+                        material_map[mat_key] = len(unique_materials)
+                        unique_materials.append(mat)
+
+                    # Store index for this z-layer
+                    material_indices[k] = material_map[mat_key]
+                    break
+
+            if not material_found:
+                raise ValueError(
+                    f"No material found for z={z_coord * 1e9:.2f} nm (k={k})"
+                )
+
+        self.unique_materials = unique_materials
+        self.material_indices = material_indices
+
+        return unique_materials, material_indices
 
     def _initialize_arrays(self) -> None:
         """Initialize internal arrays
@@ -267,81 +336,37 @@ class StructureManager:
         # Default is vacuum (epsilon_r=1)
         self.epsilon_array[:, :, :] = 1.0
 
-        # Set permittivity for each layer
-        for layer in self.layers:
-            z_range = layer.get("z_range", [0, 0])  # [z_max, z_min] where z_max > z_min
-            material_obj: Material = layer.get("material_obj")
-            epsilon_r = material_obj.epsilon_r if material_obj else 1.0
-
-            # Convert z coordinate to k index
-            # z = 0 -> k = 0 (surface)
-            # z = -size_z -> k = nz-1 (bottom)
-            # k = -z / h
-            k_top = int(-z_range[0] / self.h)  # z_max (larger) -> smaller k
-            k_bottom = int(-z_range[1] / self.h)  # z_min (smaller) -> larger k
-
-            # Range check
-            k_top = max(0, min(k_top, self.nz - 1))
-            k_bottom = max(0, min(k_bottom, self.nz - 1))
-
-            # Set permittivity (array shape: (nz, nx, ny))
-            self.epsilon_array[k_top : k_bottom + 1, :, :] = epsilon_r
+        # Set permittivity for each z-layer using material indices
+        for k in range(self.nz):
+            mat_idx = self.material_indices[k]
+            epsilon_r = self.unique_materials[mat_idx].epsilon_r
+            self.epsilon_array[k, :, :] = epsilon_r
 
         return self.epsilon_array
 
-    def generate_materials_list(self) -> List[Material]:
-        """Generate materials list for each z-layer
+    def get_material_at_z(self, k: int) -> Material:
+        """Get material at specific z-layer index
 
-        Creates a list of Material objects, one for each z grid point.
-        Materials are assumed uniform in x-y plane at each z.
+        Parameters
+        ----------
+        k : int
+            z-layer index (0 to nz-1)
 
         Returns
         -------
-        materials_list : List[Material]
-            List of Material objects, length=nz
+        material : Material
+            Material object at this z-layer
+
+        Raises
+        ------
+        IndexError
+            If k is out of range
         """
-        materials_list = []
+        if not (0 <= k < self.nz):
+            raise IndexError(f"z-layer index k={k} out of range [0, {self.nz - 1}]")
 
-        # Process each z grid point
-        for k in range(self.nz):
-            # Convert k index to z coordinate
-            z_coord = -k * self.h  # z = -k * h (negative direction)
-
-            # Find which layer this z coordinate belongs to
-            material_found = False
-            for layer in self.layers:
-                z_range = layer.get("z_range", [0, 0])  # [z_max, z_min]
-                z_max, z_min = z_range[0], z_range[1]
-
-                # Check if z_coord is within this layer (with small tolerance)
-                if z_min - 1e-12 <= z_coord <= z_max + 1e-12:
-                    material_name = layer.get("material", "Unknown")
-
-                    # Prepare overrides from YAML (if any)
-                    overrides = {}
-                    for key in [
-                        "epsilon_r",
-                        "electron_affinity",
-                        "band_gap",
-                        "effective_mass_e",
-                        "effective_mass_h",
-                    ]:
-                        if key in layer:
-                            overrides[key] = layer[key]
-
-                    # Get material from database with overrides
-                    mat = get_material(material_name, overrides if overrides else None)
-                    materials_list.append(mat)
-                    material_found = True
-                    break
-
-            if not material_found:
-                raise ValueError(
-                    f"No material found for z={z_coord * 1e9:.2f} nm (k={k})"
-                )
-
-        self.materials_list = materials_list
-        return materials_list
+        mat_idx = self.material_indices[k]
+        return self.unique_materials[mat_idx]
 
     def generate_electrode_mask(self) -> np.ndarray:
         """Generate electrode mask
@@ -560,16 +585,20 @@ class StructureManager:
         summary.append(f"Number of layers: {len(self.layers)}")
         summary.append(f"Number of electrodes: {len(self.electrodes)}")
 
+        summary.append("\n--- Unique Materials ---")
+        for i, mat in enumerate(self.unique_materials):
+            summary.append(
+                f"  {i}. {mat.name}: εr={mat.epsilon_r:.2f}, "
+                f"χ={mat.electron_affinity:.3f} eV, Eg={mat.band_gap:.3f} eV"
+            )
+
         summary.append("\n--- Layers ---")
         for i, layer in enumerate(self.layers):
             material = layer.get("material", "Unknown")
             z_range = layer.get("z_range", [0, 0])
-            material_obj: Material = layer.get("material_obj")
-            epsilon_r = material_obj.epsilon_r if material_obj else 1.0
             summary.append(
                 f"  {i + 1}. {material}: "
-                f"z=[{z_range[0] * 1e9:.1f}, {z_range[1] * 1e9:.1f}] nm, "
-                f"εr={epsilon_r:.2f}"
+                f"z=[{z_range[0] * 1e9:.1f}, {z_range[1] * 1e9:.1f}] nm"
             )
 
         summary.append("\n--- Electrodes ---")
@@ -581,26 +610,3 @@ class StructureManager:
 
         return "\n".join(summary)
 
-    @property
-    def params(self) -> Dict:
-        """Parameters for PoissonSolver initialization
-
-        Returns
-        -------
-        params : Dict
-            Dictionary containing required parameters for PoissonSolver:
-            - epsilon: Permittivity distribution (nz, nx, ny)
-            - grid_spacing: Grid spacing h (m)
-            - boundary_conditions: Boundary condition settings
-            - electrode_mask: Electrode mask (nz, nx, ny)
-            - electrode_voltages: Electrode voltages (nz, nx, ny)
-            - materials_list: List of Material objects for each z-layer
-        """
-        return {
-            "epsilon": self.epsilon_array,
-            "grid_spacing": self.h,
-            "boundary_conditions": self.boundary_conditions,
-            "electrode_mask": self.electrode_mask,
-            "electrode_voltages": self.electrode_voltages,
-            "materials_list": self.materials_list,
-        }

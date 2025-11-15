@@ -56,16 +56,17 @@ import visualizer as vis
 # Load structure from YAML
 manager = StructureManager("configs/example.yaml")
 
-# Create solver
-solver = PoissonSolver(manager.params, omega=1.8, tolerance=1e-6)
+# Create solver (pass StructureManager directly)
+solver = PoissonSolver(manager, omega=1.8, tolerance=1e-6)
 
 # Solve Poisson equation
 result = solver.solve()
 
 # Access results
 phi = result.phi          # Potential distribution (nz, nx, ny)
-Ec = result.compute_Ec()  # Conduction band edge (eV)
-Ev = result.compute_Ev()  # Valence band edge (eV)
+Ec = result.Ec            # Conduction band edge (eV)
+Ev = result.Ev            # Valence band edge (eV)
+x, y, z = result.x, result.y, result.z  # Coordinates from structure
 
 # Visualize
 vis.plot_band_diagram_1d(result)
@@ -358,16 +359,27 @@ Manages structure definitions, grid generation, and material properties.
 
 ```python
 manager = StructureManager("config.yaml")
-params = manager.params  # Dictionary for PoissonSolver
+
+# Access structure data
 x, y, z = manager.get_grid_coordinates()
+epsilon = manager.epsilon_array  # Permittivity distribution (nz, nx, ny)
+
+# Access materials efficiently
+mat = manager.get_material_at_z(k)  # Get material at z-layer k
+print(f"Unique materials: {len(manager.unique_materials)}")  # e.g., 3 materials
 ```
+
+**Efficient material storage:**
+- Materials stored as unique objects with index mapping
+- Memory efficient: O(unique materials) instead of O(grid points)
+- Example: 3 unique materials across 100 z-layers = 3 objects + 100 integers
 
 #### `PoissonSolver`
 Solves the Poisson equation using SOR method.
 
 ```python
 solver = PoissonSolver(
-    params,
+    manager,             # StructureManager instance (NEW: simplified API)
     omega=1.8,           # SOR relaxation parameter (1 < ω < 2)
     tolerance=1e-6,      # Convergence threshold
     max_iterations=10000
@@ -380,14 +392,27 @@ Container for solution with band structure methods.
 
 ```python
 result = solver.solve()
+
+# Access data
 phi = result.phi                    # Potential (V), shape=(nz, nx, ny)
-Ec = result.compute_Ec()            # Conduction band (eV)
-Ev = result.compute_Ev()            # Valence band (eV)
+x, y, z = result.x, result.y, result.z  # Coordinates (properties)
+
+# Band structure
+Ec = result.Ec                      # Conduction band (eV) - property
+Ev = result.Ev                      # Valence band (eV) - property
+# Or use compute methods:
+Ec = result.compute_Ec()            # Same as above
+Ev = result.compute_Ev()
+
+# 1D band diagram
 z, Ec_1d, Ev_1d, phi_1d = result.get_band_diagram_1d(x_idx, y_idx)
 
-# Save/load
+# Access structure
+mat = result.structure.get_material_at_z(k)
+
+# Save/load (requires original StructureManager for loading)
 result.save("result.npz")
-result = SolverResult.load("result.npz")
+result = SolverResult.load("result.npz", structure=manager)
 ```
 
 #### `PotentialInterpolator`
