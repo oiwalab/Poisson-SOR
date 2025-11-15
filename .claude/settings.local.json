@@ -4,7 +4,9 @@
       "Bash(uv run pytest tests/test_structure_manager.py::test_load_from_actual_yaml_file -v)",
       "Bash(uv run pytest tests/ -v)",
       "Bash(uv run python:*)",
-      "Bash(uv run jupyter:*)"
+      "Bash(uv run jupyter:*)",
+      "Bash(git mv solver_result.py poisson_result.py)",
+      "Bash(python -c \"import json; data=json.load(open(''examples/shuttling.ipynb'')); data[''cells''][0][''source'']=[line.replace(''structure_manager'', ''structure'') if ''from structure_manager'' in line else line for line in data[''cells''][0][''source'']]; json.dump(data, open(''examples/shuttling.ipynb'', ''w''), indent=1)\")"
     ],
     "deny": [],
     "ask": []

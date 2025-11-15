@@ -9,7 +9,7 @@ from pathlib import Path
 # srcディレクトリをパスに追加
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from structure_manager import StructureManager
+from structure import StructureManager
 from poisson_solver import PoissonSolver
 import visualizer as vis
 
@@ -57,7 +57,7 @@ def main():
     figures_dir = results_dir / "figures"
     figures_dir.mkdir(exist_ok=True)
 
-    # SolverResult形式で保存
+    # PoissonResult形式で保存
     result.save(str(results_dir / "band_bending_result.npz"))
 
     # 可視化

@@ -18,7 +18,7 @@ This allows O(1) computation for any time point after initial basis setup.
 
 Example
 -------
->>> from structure_manager import StructureManager
+>>> from structure import StructureManager
 >>> from potential_interpolator import PotentialInterpolator
 >>> from time_dependent_potential import TimeDependentPotential
 >>> import numpy as np

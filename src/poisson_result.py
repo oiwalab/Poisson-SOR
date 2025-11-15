@@ -1,4 +1,4 @@
-"""Solver result container with band structure information
+"""Poisson solver result container with band structure information
 
 Stores potential and structure reference, computes band edges on demand
 """
@@ -8,11 +8,11 @@ from dataclasses import dataclass
 from typing import Dict, Optional, Tuple, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from structure_manager import StructureManager
+    from structure import StructureManager
 
 
 @dataclass
-class SolverResult:
+class PoissonResult:
     """Container for Poisson solver results with band structure
 
     Parameters
@@ -204,7 +204,7 @@ class SolverResult:
         print("Note: Structure information not saved. Original StructureManager needed for reconstruction.")
 
     @classmethod
-    def load(cls, filepath: str, structure: "StructureManager") -> "SolverResult":
+    def load(cls, filepath: str, structure: "StructureManager") -> "PoissonResult":
         """Load solver result from file
 
         Parameters
@@ -216,7 +216,7 @@ class SolverResult:
 
         Returns
         -------
-        result : SolverResult
+        result : PoissonResult
             Loaded solver result
 
         Notes
@@ -259,7 +259,7 @@ class SolverResult:
     def __repr__(self) -> str:
         """String representation of solver result"""
         return (
-            f"SolverResult(shape=({self.nz}, {self.nx}, {self.ny}), "
+            f"PoissonResult(shape=({self.nz}, {self.nx}, {self.ny}), "
             f"converged={self.info.get('converged', False)}, "
             f"iterations={self.info.get('iterations', 0)})"
         )

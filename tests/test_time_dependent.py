@@ -11,7 +11,7 @@ from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from structure_manager import StructureManager
+from structure import StructureManager
 from potential_interpolator import PotentialInterpolator
 from time_dependent_potential import VoltageFunction, TimeDependentPotential
 

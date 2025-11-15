@@ -12,7 +12,7 @@ from datetime import datetime
 # Add src directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from structure_manager import StructureManager
+from structure import StructureManager
 from poisson_solver import PoissonSolver
 
 

@@ -378,7 +378,7 @@ def test_band_bending_si_sio2():
     4. Band offset at Si/SiO2 interface (discontinuity in χ)
     5. SolverResult object is correctly created
     """
-    from structure_manager import StructureManager
+    from structure import StructureManager
     import yaml
 
     # Create test configuration for Si/SiO2 structure
@@ -444,9 +444,9 @@ def test_band_bending_si_sio2():
         # Solve
         result = solver.solve(verbose=False)
 
-        # Test 1: Check that result is SolverResult object
-        from solver_result import SolverResult
-        assert isinstance(result, SolverResult), "Result should be SolverResult object"
+        # Test 1: Check that result is PoissonResult object
+        from poisson_result import PoissonResult
+        assert isinstance(result, PoissonResult), "Result should be PoissonResult object"
 
         # Test 2: Check that structure is available
         assert result.structure is not None, "Structure should be available"

@@ -19,7 +19,7 @@ of potential for arbitrary voltage combinations without re-solving.
 
 Example
 -------
->>> from structure_manager import StructureManager
+>>> from structure import StructureManager
 >>> from poisson_solver import PoissonSolver
 >>> from potential_interpolator import PotentialInterpolator
 >>>
@@ -137,7 +137,7 @@ class PotentialInterpolator:
         verbose: int = 1,
     ):
         # Import here to avoid circular dependency
-        from structure_manager import StructureManager
+        from structure import StructureManager
         from poisson_solver import PoissonSolver
 
         # Get coordinate arrays

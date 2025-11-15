@@ -13,7 +13,7 @@ from pathlib import Path
 # Add src directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from structure_manager import StructureManager
+from structure import StructureManager
 
 
 def test_structure_manager_valid_config():

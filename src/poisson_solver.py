@@ -6,10 +6,10 @@ Solves Poisson equation -∇⋅(ε∇φ)=ρ for systems with non-uniform permitt
 import numpy as np
 from typing import Dict, Optional, TYPE_CHECKING
 from numba import njit
-from solver_result import SolverResult
+from poisson_result import PoissonResult
 
 if TYPE_CHECKING:
-    from structure_manager import StructureManager
+    from structure import StructureManager
 
 
 class PoissonSolver:
@@ -64,7 +64,7 @@ class PoissonSolver:
         rho: Optional[np.ndarray] = None,
         phi_initial: Optional[np.ndarray] = None,
         verbose: bool = True,
-    ) -> SolverResult:
+    ) -> PoissonResult:
         """Solve the Poisson equation
 
         Parameters
@@ -79,8 +79,8 @@ class PoissonSolver:
 
         Returns
         -------
-        result : SolverResult
-            SolverResult object containing phi, coordinates, materials, and convergence info
+        result : PoissonResult
+            PoissonResult object containing phi, coordinates, materials, and convergence info
         """
         # Initialize charge density
         if rho is None:
@@ -143,8 +143,8 @@ class PoissonSolver:
         }
         return self._create_solver_result(phi, info)
 
-    def _create_solver_result(self, phi: np.ndarray, info: Dict) -> SolverResult:
-        """Create SolverResult object from solution
+    def _create_solver_result(self, phi: np.ndarray, info: Dict) -> PoissonResult:
+        """Create PoissonResult object from solution
 
         Parameters
         ----------
@@ -155,11 +155,11 @@ class PoissonSolver:
 
         Returns
         -------
-        result : SolverResult
-            SolverResult object with phi, structure reference, and info
+        result : PoissonResult
+            PoissonResult object with phi, structure reference, and info
         """
-        # Create SolverResult with structure reference
-        result = SolverResult(
+        # Create PoissonResult with structure reference
+        result = PoissonResult(
             phi=phi,
             structure=self.structure,
             info=info,

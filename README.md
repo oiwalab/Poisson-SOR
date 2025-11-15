@@ -49,7 +49,7 @@ uv sync --dev
 ### Basic Usage
 
 ```python
-from structure_manager import StructureManager
+from structure import StructureManager
 from poisson_solver import PoissonSolver
 import visualizer as vis
 
@@ -272,9 +272,9 @@ uv run jupyter notebook examples/tutorial.ipynb
 .
 ├── src/
 │   ├── materials.py                # Material database (Si, SiO2, etc.)
-│   ├── structure_manager.py        # Structure and grid management
+│   ├── structure.py                # Structure and grid management
 │   ├── poisson_solver.py           # SOR Poisson solver (JIT compiled)
-│   ├── solver_result.py            # Results container with band structure
+│   ├── poisson_result.py           # Results container with band structure
 │   ├── potential_interpolator.py   # Fast voltage interpolation
 │   ├── time_dependent_potential.py # Time-dependent voltage dynamics
 │   ├── schrodinger.py              # 2D Schrödinger equation solver
@@ -288,7 +288,7 @@ uv run jupyter notebook examples/tutorial.ipynb
 ├── tests/
 │   ├── test_config_small.yaml      # Small test configuration (21³ grid)
 │   ├── test_materials.py           # Material database tests
-│   ├── test_structure_manager.py   # Structure manager tests
+│   ├── test_structure.py           # Structure manager tests
 │   ├── test_solver.py              # Solver tests with physics validation
 │   ├── test_interpolator.py       # Interpolation tests (17 tests)
 │   ├── test_time_dependent.py     # Time-dependent tests (15 tests)
@@ -318,7 +318,7 @@ uv run pytest --cov=src --cov-report=html
 
 Test results (as of latest commit):
 - `test_materials.py`: Material database validation
-- `test_structure_manager.py`: Structure loading and grid generation
+- `test_structure.py`: Structure loading and grid generation
 - `test_solver.py`: Physics-based solver validation (parallel plate, point charge, band bending)
 - `test_interpolator.py`: 17 tests covering initialization, interpolation, accuracy, save/load (2.5s runtime)
 - `test_time_dependent.py`: 15 tests covering voltage functions, time-dependent computation, accuracy (11s runtime)
@@ -387,7 +387,7 @@ solver = PoissonSolver(
 result = solver.solve(rho=None, phi_initial=None, verbose=True)
 ```
 
-#### `SolverResult`
+#### `PoissonResult`
 Container for solution with band structure methods.
 
 ```python
@@ -412,7 +412,7 @@ mat = result.structure.get_material_at_z(k)
 
 # Save/load (requires original StructureManager for loading)
 result.save("result.npz")
-result = SolverResult.load("result.npz", structure=manager)
+result = PoissonResult.load("result.npz", structure=manager)
 ```
 
 #### `PotentialInterpolator`
