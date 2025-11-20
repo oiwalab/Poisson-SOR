@@ -45,7 +45,7 @@ electrodes:
     x_range: [35e-9, 65e-9]  # 35-65nm in x
     y_range: [20e-9, 80e-9]  # 20-80nm in y
     z_position: -15e-9        # Electrode bottom at z=-15nm
-    voltage: 0.0            # 0V
+    voltage: 0.5            # 0V
 
   - name: "gate_3"
     shape: "rectangle"
@@ -59,7 +59,7 @@ electrodes:
     x_range: [105e-9, 135e-9]  # 105-135nm in x
     y_range: [20e-9, 80e-9]  # 20-80nm in y
     z_position: -15e-9        # Electrode bottom at z=-15nm
-    voltage: 0.0            # 0V
+    voltage: -0.5            # 0V
 
 # Boundary conditions
 boundary_conditions:
