@@ -798,7 +798,7 @@ def plot_potential_3d(
     print(f"\n  Colorscale: {colorscale}")
     print(f"  Range: [{vmin:.3f}, {vmax:.3f}] V")
     print(f"  Isosurfaces at: {[f'{v:.3f}' for v in isosurface_values]} V")  # noqa: F541
-    print(f"\n  Array shapes:")
+    print("\n  Array shapes:")
     print(f"  - Original phi: {result.phi.shape} (nz, nx, ny)")
     print(f"  - Reordered phi: {phi_reordered.shape} (nx, ny, nz)")
     print(f"  - Sampled phi: {phi_sampled.shape}")
