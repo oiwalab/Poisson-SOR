@@ -7,6 +7,8 @@ import numpy as np
 from typing import Dict, Optional, TYPE_CHECKING
 from numba import njit
 from poisson_result import PoissonResult
+import os
+from pathlib import Path
 
 if TYPE_CHECKING:
     from structure import StructureManager
@@ -27,6 +29,8 @@ class PoissonSolver:
         Convergence threshold, default=1e-6
     max_iterations : int, optional
         Maximum number of iterations, default=10000
+    use_julia : bool, optional
+        Use Julia backend for solving (default=True). Falls back to Numba if Julia unavailable
     """
 
     def __init__(
@@ -35,6 +39,7 @@ class PoissonSolver:
         omega: float = 1.8,
         tolerance: float = 1e-6,
         max_iterations: int = 10000,
+        use_julia: bool = True,
     ):
         self.structure = structure
 
@@ -58,6 +63,12 @@ class PoissonSolver:
         self.convergence_history = []
 
         self._precompute_z_interfaces()
+
+        # Initialize Julia backend
+        self._use_julia = use_julia
+        self._julia_main = None
+        if self._use_julia:
+            self._initialize_julia()
 
     def solve(
         self,
@@ -92,6 +103,100 @@ class PoissonSolver:
         else:
             phi = phi_initial.copy()
 
+        # Use Julia backend if available
+        if self._use_julia and self._julia_main is not None:
+            return self._solve_julia(phi, rho, verbose)
+
+        # Fall back to Python/Numba implementation
+        return self._solve_python(phi, rho, verbose)
+
+    def _solve_julia(
+        self, phi: np.ndarray, rho: np.ndarray, verbose: bool
+    ) -> PoissonResult:
+        """Solve using Julia backend
+
+        Parameters
+        ----------
+        phi : np.ndarray
+            Initial potential distribution (V)
+        rho : np.ndarray
+            Charge density distribution (C/m^3)
+        verbose : bool
+            Print convergence progress
+
+        Returns
+        -------
+        result : PoissonResult
+            Solver result with potential and convergence info
+        """
+        # Prepare electrode data
+        if self.electrode_mask is None:
+            electrode_mask = np.zeros((self.nz, self.nx, self.ny), dtype=bool)
+            electrode_voltages = np.zeros((self.nz, self.nx, self.ny))
+        else:
+            electrode_mask = self.electrode_mask
+            electrode_voltages = self.electrode_voltages
+
+        # Convert numpy arrays to Julia arrays
+        jl = self._julia_main
+        phi_jl = jl.Array(phi)
+        rho_jl = jl.Array(rho)
+        epsilon_jl = jl.Array(self.epsilon)
+        eps_z_array_jl = jl.Array(self.eps_z_array)
+        electrode_mask_jl = jl.Array(electrode_mask)
+        electrode_voltages_jl = jl.Array(electrode_voltages)
+
+        # Call Julia solver
+        phi_result, info_dict = jl.solve_poisson(
+            phi_jl,
+            rho_jl,
+            epsilon_jl,
+            eps_z_array_jl,
+            electrode_mask_jl,
+            electrode_voltages_jl,
+            self.boundary_conditions,
+            self.h,
+            self.omega,
+            self.epsilon_0,
+            self.tolerance,
+            self.max_iterations,
+            verbose,
+        )
+
+        # Convert Julia arrays back to numpy
+        phi_final = np.array(phi_result)
+
+        # Store convergence history
+        self.convergence_history = list(info_dict["convergence_history"])
+
+        # Create info dict for PoissonResult
+        info = {
+            "converged": bool(info_dict["converged"]),
+            "iterations": int(info_dict["iterations"]),
+            "final_phi_change": float(info_dict["final_phi_change"]),
+        }
+
+        return self._create_solver_result(phi_final, info)
+
+    def _solve_python(
+        self, phi: np.ndarray, rho: np.ndarray, verbose: bool
+    ) -> PoissonResult:
+        """Solve using Python/Numba implementation
+
+        Parameters
+        ----------
+        phi : np.ndarray
+            Initial potential distribution (V)
+        rho : np.ndarray
+            Charge density distribution (C/m^3)
+        verbose : bool
+            Print convergence progress
+
+        Returns
+        -------
+        result : PoissonResult
+            Solver result with potential and convergence info
+        """
         self.convergence_history = []
 
         # Set electrode potential (fixed values)
@@ -193,6 +298,35 @@ class PoissonSolver:
                 self.eps_z_array[k] = eps_harmonic
             else:
                 self.eps_z_array[k] = eps_k
+
+    def _initialize_julia(self):
+        """Initialize Julia environment and load solver module"""
+        try:
+            from juliacall import Main as jl
+
+            # Get path to Julia source file
+            julia_file = Path(__file__).parent / "poisson_julia" / "sor_solver.jl"
+
+            if not julia_file.exists():
+                print(f"Warning: Julia solver file not found at {julia_file}")
+                print("Falling back to Numba implementation")
+                self._use_julia = False
+                return
+
+            # Load Julia source file
+            jl.include(str(julia_file))
+
+            self._julia_main = jl
+            print("Julia backend initialized successfully")
+
+        except ImportError:
+            print("Warning: juliacall not available. Install with: uv add juliacall")
+            print("Falling back to Numba implementation")
+            self._use_julia = False
+        except Exception as e:
+            print(f"Warning: Failed to initialize Julia backend: {e}")
+            print("Falling back to Numba implementation")
+            self._use_julia = False
 
     def _sor_iteration(self, phi: np.ndarray, rho: np.ndarray) -> np.ndarray:
         """Single iteration update using SOR method
