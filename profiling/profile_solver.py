@@ -32,7 +32,7 @@ def run_solver():
 
     # Initialize solver
     print("\n[2] Initializing solver...")
-    solver = PoissonSolver(manager, max_iterations=1000)
+    solver = PoissonSolver(manager, use_julia=True)
 
     print(f"  Grid size: ({manager.nx}, {manager.ny}, {manager.nz})")
     print(f"  Omega: {solver.omega}")
