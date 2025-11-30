@@ -4,7 +4,7 @@
 # Computational domain
 domain:
   size: [50e-9, 50e-9, 50e-9]  # [x, y, z] in meters (50nm x 50nm x 50nm)
-  grid_spacing: 1e-9  # h in meters (1nm, isotropic grid)
+  grid_spacing: 0.5e-9  # h in meters (0.2nm, isotropic grid)
 
 # Material layer structure
 layers:

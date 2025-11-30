@@ -4,6 +4,7 @@ This script runs the solver with cProfile and saves results for analysis with sn
 """
 
 import sys
+import shutil
 import cProfile
 import pstats
 from pathlib import Path
@@ -16,14 +17,11 @@ from structure import StructureManager
 from poisson_solver import PoissonSolver
 
 
-def run_solver():
+def run_solver(config_path: Path):
     """Run the Poisson solver for profiling"""
     print("=" * 60)
     print("Profiling Poisson Solver")
     print("=" * 60)
-
-    # Configuration file path
-    config_path = Path(__file__).parent / "profile_config.yaml"
 
     # Load structure
     print("\n[1] Loading structure definition...")
@@ -32,7 +30,7 @@ def run_solver():
 
     # Initialize solver
     print("\n[2] Initializing solver...")
-    solver = PoissonSolver(manager, use_julia=True)
+    solver = PoissonSolver(manager, use_julia=False)
 
     print(f"  Grid size: ({manager.nx}, {manager.ny}, {manager.nz})")
     print(f"  Omega: {solver.omega}")
@@ -58,17 +56,21 @@ def main():
     # Setup profiler
     profiler = cProfile.Profile()
 
+    # Configuration file path
+    config_path = Path(__file__).parent / "profile_config.yaml"
+
     # Run with profiling
     print("Starting profiling...\n")
     profiler.enable()
-    result = run_solver()
+    result = run_solver(config_path)
     profiler.disable()
 
     # Save profile results with timestamp
-    results_dir = Path(__file__).parent / "results"
-    results_dir.mkdir(exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    profile_file = results_dir / f"solver_profile_{timestamp}.prof"
+    results_dir = Path(__file__).parent / "results" / timestamp
+    results_dir.mkdir(exist_ok=True)
+    profile_file = results_dir / "solver_profile.prof"
+    shutil.copy(config_path, results_dir / "profile_config.yaml")
 
     profiler.dump_stats(str(profile_file))
     print(f"\n[5] Profile saved to: {profile_file}")
