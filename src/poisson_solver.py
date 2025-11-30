@@ -31,6 +31,8 @@ class PoissonSolver:
         Maximum number of iterations, default=10000
     use_julia : bool, optional
         Use Julia backend for solving (default=True). Falls back to Numba if Julia unavailable
+    method : str, optional
+        Solver method: "sor" for standard SOR, "redblack" for Red-Black SOR (default="sor")
     """
 
     def __init__(
@@ -40,6 +42,7 @@ class PoissonSolver:
         tolerance: float = 1e-6,
         max_iterations: int = 10000,
         use_julia: bool = True,
+        method: str = "sor",
     ):
         self.structure = structure
 
@@ -65,7 +68,10 @@ class PoissonSolver:
         self._precompute_z_interfaces()
 
         # Initialize Julia backend
+        self.method = method
         self._use_julia = use_julia
+        self.validate_method()
+
         self._julia_main = None
         if self._use_julia:
             self._initialize_julia()
@@ -305,7 +311,16 @@ class PoissonSolver:
             from juliacall import Main as jl
 
             # Get path to Julia source file
-            julia_file = Path(__file__).parent / "poisson_julia" / "sor_solver.jl"
+            if self.method.lower() == "sor":
+                julia_file = Path(__file__).parent / "poisson_julia" / "sor_solver.jl"
+            elif self.method.lower() == "redblack":
+                julia_file = (
+                    Path(__file__).parent / "poisson_julia" / "redblack_solver.jl"
+                )
+            else:
+                raise ValueError(
+                    f"Invalid solver method: {self.method}. Choose 'sor' or 'redblack'."
+                )
 
             if not julia_file.exists():
                 print(f"Warning: Julia solver file not found at {julia_file}")
@@ -470,12 +485,9 @@ class PoissonSolver:
         return phi_new
 
     def compute_residual(self, phi: np.ndarray, rho: np.ndarray) -> float:
-        """Compute residual
-
-        Uses L2 norm
-        For heterostructure: assumes permittivity is uniform in x,y directions
-
-        New coordinate system: array shape (nz, nx, ny), loop order k (z) -> i (x) -> j (y)
+        """
+        This is unused currently but kept for potential future use.
+        Compute residual of Poisson equation for convergence check.
         """
         residual_array = np.zeros_like(phi)
         h2 = self.h**2
@@ -504,6 +516,21 @@ class PoissonSolver:
                     residual_array[k, i, j] = -laplacian + rho[k, i, j] / self.epsilon_0
 
         return np.sqrt(np.mean(residual_array**2)) * h2
+
+    def validate_method(self):
+        """Validate solver method"""
+        if self._use_julia:
+            valid_methods = ["sor", "redblack"]
+            if self.method.lower() not in valid_methods:
+                raise ValueError(
+                    f"Invalid solver method: {self.method}. Choose from {valid_methods}."
+                )
+        else:
+            if self.method.lower() != "sor":
+                raise ValueError(
+                    "Numba implementation only supports 'sor' method. "
+                    "Set use_julia=True to use 'redblack' method."
+                )
 
 
 @njit

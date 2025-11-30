@@ -36,11 +36,15 @@ class MockStructureManager:
         return x, y, z
 
 
-def test_uniform_dielectric_neumann():
+@pytest.mark.parametrize("method", ["sor", "redblack"])
+def test_uniform_dielectric_neumann(method):
     """Test with uniform dielectric and Neumann boundary conditions
 
     With rho=0 and Neumann boundary conditions, potential should be constant everywhere
+    Tests both standard SOR and Red-Black SOR methods.
     """
+    print(f"\n--- Testing with method='{method}' ---")
+
     # Small grid (new coordinate system: shape = (nz, nx, ny))
     nz, nx, ny = 10, 10, 10
     h = 1e-9  # 1nm (isotropic grid)
@@ -69,6 +73,7 @@ def test_uniform_dielectric_neumann():
         omega=1.5,
         tolerance=1e-6,
         max_iterations=1000,
+        method=method,
     )
 
     # Solve (zero charge density)
@@ -82,7 +87,8 @@ def test_uniform_dielectric_neumann():
     assert result.info["iterations"] >= 1
 
 
-def test_parallel_plate_capacitor():
+@pytest.mark.parametrize("method", ["sor", "redblack"])
+def test_parallel_plate_capacitor(method):
     """Test for parallel plate capacitor (simplified version)
 
     Approximated as 1D problem varying only in z direction
@@ -90,7 +96,10 @@ def test_parallel_plate_capacitor():
     New coordinate system:
     - z_top (k=0, z=0nm): 1V
     - z_bottom (k=nz-1, z=-20nm): 0V
+    Tests both standard SOR and Red-Black SOR methods.
     """
+    print(f"\n--- Testing with method='{method}' ---")
+
     # Isotropic grid (small grid for 1D problem)
     # Array shape: (nz, nx, ny)
     nz, nx, ny = 11, 3, 3
@@ -120,6 +129,7 @@ def test_parallel_plate_capacitor():
         omega=1.5,
         tolerance=1e-8,
         max_iterations=5000,
+        method=method,
     )
 
     # Set initial condition with Dirichlet boundary conditions manually
@@ -161,13 +171,17 @@ def test_parallel_plate_capacitor():
     )
 
 
-def test_electrode_volume():
+@pytest.mark.parametrize("method", ["sor", "redblack"])
+def test_electrode_volume(method):
     """Test treating electrodes as 3D volumes
 
     New coordinate system:
     - Array shape: (nz, nx, ny)
     - Electrodes extend downward from surface (k=0, z=0) as 3D volumes
+    Tests both standard SOR and Red-Black SOR methods.
     """
+    print(f"\n--- Testing with method='{method}' ---")
+
     # Small grid (array shape: (nz, nx, ny))
     nz, nx, ny = 11, 11, 11
     h = 10e-9  # 10nm (isotropic grid)
@@ -211,6 +225,7 @@ def test_electrode_volume():
         omega=1.8,
         tolerance=1e-6,
         max_iterations=10000,
+        method=method,
     )
 
     # Set initial condition (start from values close to electrode voltage)
@@ -239,12 +254,16 @@ def test_electrode_volume():
     assert result.info["converged"], "Solver should converge"
 
 
-def test_point_charge():
+@pytest.mark.parametrize("method", ["sor", "redblack"])
+def test_point_charge(method):
     """Test potential of single point charge
 
     Verifies spherical symmetry and 1/r dependence
     Compares with analytical solution φ(r) = Q/(4πε₀r)
+    Tests both standard SOR and Red-Black SOR methods.
     """
+    print(f"\n--- Testing with method='{method}' ---")
+
     # Grid setup (array shape: (nz, nx, ny))
     nz, nx, ny = 41, 41, 41
     h = 1e-9  # 1nm (isotropic grid)
@@ -281,6 +300,7 @@ def test_point_charge():
         omega=1.5,
         tolerance=1e-10,
         max_iterations=20000,
+        method=method,
     )
 
     # Solve
@@ -368,7 +388,8 @@ def test_point_charge():
     print("\nPoint charge test passed!")
 
 
-def test_band_bending_si_sio2():
+@pytest.mark.parametrize("method", ["sor", "redblack"])
+def test_band_bending_si_sio2(method):
     """Test band bending calculation for Si/SiO2 heterostructure
 
     Verifies:
@@ -377,7 +398,10 @@ def test_band_bending_si_sio2():
     3. Different band parameters in Si and SiO2 regions
     4. Band offset at Si/SiO2 interface (discontinuity in χ)
     5. SolverResult object is correctly created
+    Tests both standard SOR and Red-Black SOR methods.
     """
+    print(f"\n--- Testing with method='{method}' ---")
+
     from structure import StructureManager
     import yaml
 
@@ -439,6 +463,7 @@ def test_band_bending_si_sio2():
             omega=config_dict["solver"]["omega"],
             tolerance=config_dict["solver"]["tolerance"],
             max_iterations=config_dict["solver"]["max_iterations"],
+            method=method,
         )
 
         # Solve
