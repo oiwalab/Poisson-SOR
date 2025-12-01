@@ -30,7 +30,7 @@ def run_solver(config_path: Path):
 
     # Initialize solver
     print("\n[2] Initializing solver...")
-    solver = PoissonSolver(manager, use_julia=True, method="redblack", omega=1.6)
+    solver = PoissonSolver(manager, use_julia=True, method="redblack", omega=1.8)
 
     print(f"  Grid size: ({manager.nx}, {manager.ny}, {manager.nz})")
     print(f"  Omega: {solver.omega}")
