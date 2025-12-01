@@ -719,11 +719,10 @@ class TimeDependentPotential:
         self,
         t_array: np.ndarray,
         initial_position: Tuple[float, float],
-        search_radius: float = 20e-9,
         interpolate_trajectory: bool = True,
         return_curvature: bool = True,
         effective_mass: Optional[float] = None,
-        max_steps: int = 1000,
+        max_steps: int = 40,
     ) -> Dict:
         """
         Track the position of a local minimum over time.
@@ -741,8 +740,6 @@ class TimeDependentPotential:
             Time points to track (s)
         initial_position : tuple[float, float]
             Initial (x, y) position to start search (m)
-        search_radius : float, optional
-            Maximum allowed distance from previous position (m). Default: 20e-9 (20nm)
         interpolate_trajectory : bool, optional
             Smooth trajectory using spline interpolation. Default: True
         return_curvature : bool, optional
@@ -835,14 +832,6 @@ class TimeDependentPotential:
                     f"Previous position: ({x_positions[-1] * 1e9:.2f}, {y_positions[-1] * 1e9:.2f}) nm"
                 )
 
-            # Check if moved too far (outside search radius)
-            dist = np.sqrt(
-                (x_min - x_positions[-1]) ** 2 + (y_min - y_positions[-1]) ** 2
-            )
-            if dist > search_radius:
-                raise ValueError(
-                    f"Minimum moved {dist * 1e9:.2f} nm, exceeding search radius {search_radius * 1e9:.2f} nm at t={t:.2e}s"
-                )
 
             x_positions.append(x_min)
             y_positions.append(y_min)
@@ -1082,6 +1071,351 @@ class TimeDependentPotential:
         curvature = (phi2 - 2 * phi1 + phi0) / h**2
 
         return x_min, phi_min, curvature
+
+    def animate_ground_state_with_tracking(
+        self,
+        t_array: np.ndarray,
+        tracking_result: Dict,
+        effective_mass: float,
+        region_size: float = 100e-9,
+        n_states: int = 2,
+        save_path: Optional[str] = None,
+        fps: int = 30,
+        show_colorbar: bool = True,
+        figsize: Tuple[int, int] = (8, 12),
+        show_energy: bool = True,
+    ):
+        """Create animation of ground state wavefunction tracking local minimum
+
+        Extracts local region around tracked minimum position and solves
+        Schrödinger equation in that region only. More efficient than solving
+        over the entire domain when the wavefunction is localized.
+
+        Parameters
+        ----------
+        t_array : np.ndarray
+            Array of time points (seconds)
+        tracking_result : Dict
+            Result from track_local_minimum() containing 'x', 'y', 't' arrays
+        effective_mass : float
+            Effective mass of particle (kg), e.g., 0.19 * electron_mass for GaAs
+        region_size : float, optional
+            Size of local region to extract (m). Default: 100e-9 (100nm box)
+        n_states : int, optional
+            Number of eigenstates to compute (default: 2 for energy gap)
+        save_path : str, optional
+            Path to save animation (e.g., 'animation.gif', 'animation.mp4')
+        fps : int, optional
+            Frames per second (default: 30)
+        show_colorbar : bool, optional
+            Show colorbars (default: True)
+        figsize : Tuple[int, int], optional
+            Figure size (width, height) in inches (default: (8, 12))
+        show_energy : bool, optional
+            Show energy gap plot (default: True)
+
+        Returns
+        -------
+        anim : matplotlib.animation.FuncAnimation
+            Animation object
+
+        Notes
+        -----
+        Requires matplotlib. For saving:
+        - .gif: requires pillow
+        - .mp4: requires ffmpeg
+
+        Examples
+        --------
+        >>> from scipy.constants import electron_mass
+        >>> t_array = np.linspace(0, 2e-9, 60)
+        >>> tracking = td_pot.track_local_minimum(
+        ...     t_array, (50e-9, 50e-9), effective_mass=0.19*electron_mass
+        ... )
+        >>> anim = td_pot.animate_ground_state_with_tracking(
+        ...     t_array, tracking, 0.19*electron_mass, region_size=100e-9
+        ... )
+        """
+        import matplotlib.pyplot as plt
+        from matplotlib.animation import FuncAnimation
+        from matplotlib import colormaps
+        from matplotlib.patches import Rectangle
+        from schrodinger import SchrodingerSolver2D
+
+        # Get grid info
+        x_full = self.interpolator.x
+        y_full = self.interpolator.y
+        x_nm_full = x_full * 1e9
+        y_nm_full = y_full * 1e9
+        dx = x_full[1] - x_full[0]
+        dy = y_full[1] - y_full[0]
+
+        # Setup figure with vertical layout
+        if show_energy:
+            fig = plt.figure(figsize=figsize)
+            ax_full = fig.add_subplot(3, 1, 1)
+            ax_local = fig.add_subplot(3, 1, 2)
+            ax_energy = fig.add_subplot(3, 1, 3)
+        else:
+            fig = plt.figure(figsize=(figsize[0], figsize[1] * 2 // 3))
+            ax_full = fig.add_subplot(2, 1, 1)
+            ax_local = fig.add_subplot(2, 1, 2)
+
+        # Pre-compute potential range
+        print("Pre-computing potential range...")
+        phi_min_global, phi_max_global = self._compute_potential_range(
+            t_array[: min(10, len(t_array))]
+        )
+
+        # Storage for energy gap history
+        energy_gap_history = []
+        t_history = []
+
+        # Initialize full potential plot
+        phi_init = self(t_array[0])
+        im_full = ax_full.pcolormesh(
+            x_nm_full,
+            y_nm_full,
+            phi_init.T,
+            shading="auto",
+            cmap=colormaps.get_cmap("RdBu_r"),
+            vmin=phi_min_global,
+            vmax=phi_max_global,
+        )
+        ax_full.set_xlabel("x (nm)")
+        ax_full.set_ylabel("y (nm)")
+        ax_full.set_aspect("equal")
+        ax_full.set_title(f"Full potential at t = 0.00 ns")
+
+        if show_colorbar:
+            cbar_full = plt.colorbar(im_full, ax=ax_full)
+            cbar_full.set_label("Potential (V)")
+
+        # Add trajectory line and markers
+        (traj_line,) = ax_full.plot([], [], "r-", linewidth=1.5, alpha=0.7, zorder=11)
+        (current_marker,) = ax_full.plot(
+            [], [], "rx", markersize=12, markeredgewidth=2.5, zorder=12
+        )
+
+        # Add extraction box rectangle
+        x_center_init = tracking_result["x"][0] * 1e9
+        y_center_init = tracking_result["y"][0] * 1e9
+        region_size_nm = region_size * 1e9
+        extraction_box = Rectangle(
+            (x_center_init - region_size_nm / 2, y_center_init - region_size_nm / 2),
+            region_size_nm,
+            region_size_nm,
+            linewidth=2,
+            edgecolor="yellow",
+            facecolor="none",
+            zorder=13,
+        )
+        ax_full.add_patch(extraction_box)
+
+        # Extract initial local region and solve
+        print("Solving initial local Schrödinger equation...")
+        x_center_init_m = tracking_result["x"][0]
+        y_center_init_m = tracking_result["y"][0]
+        phi_local, x_local, y_local = self._extract_local_region(
+            phi_init, x_full, y_full, x_center_init_m, y_center_init_m, region_size
+        )
+
+        solver_init = SchrodingerSolver2D(phi_local, dx, dy, effective_mass)
+        energies_init, psi_init = solver_init.solve(n_states=n_states)
+        prob_density_init = solver_init.compute_probability_density(psi_init[0])
+
+        if n_states >= 2:
+            energy_gap_init = energies_init[1] - energies_init[0]
+            energy_gap_history.append(energy_gap_init * 1e3)  # Convert to meV
+        t_history.append(t_array[0])
+
+        # Initialize local wavefunction plot
+        x_local_nm = x_local * 1e9
+        y_local_nm = y_local * 1e9
+        im_local = ax_local.pcolormesh(
+            x_local_nm,
+            y_local_nm,
+            prob_density_init.T,
+            shading="auto",
+            cmap=colormaps.get_cmap("viridis"),
+        )
+        ax_local.set_xlabel("x (nm)")
+        ax_local.set_ylabel("y (nm)")
+        ax_local.set_aspect("equal")
+        title_str = f"|ψ₀|² (local) at t = 0.00 ns\nE₀ = {energies_init[0]:.4f} eV"
+        if n_states >= 2:
+            title_str += f", ΔE = {energy_gap_init * 1e3:.2f} meV"
+        ax_local.set_title(title_str)
+
+        if show_colorbar:
+            cbar_local = plt.colorbar(im_local, ax=ax_local)
+            cbar_local.set_label("Probability density (1/m²)")
+
+        # Initialize energy gap plot
+        if show_energy and n_states >= 2:
+            (line_energy,) = ax_energy.plot(
+                [], [], "o-", linewidth=2, markersize=6, color="C0"
+            )
+            ax_energy.set_xlabel("Time (ns)")
+            ax_energy.set_ylabel("Energy gap ΔE = E₁ - E₀ (meV)")
+            ax_energy.set_xlim(t_array[0] * 1e9, t_array[-1] * 1e9)
+            ax_energy.set_ylim(bottom=0)  # Start y-axis from 0
+            ax_energy.grid(True, alpha=0.3)
+
+        def update(frame):
+            """Update function for animation"""
+            t = t_array[frame]
+
+            # Get tracked position
+            x_center = tracking_result["x"][frame]
+            y_center = tracking_result["y"][frame]
+            x_center_nm = x_center * 1e9
+            y_center_nm = y_center * 1e9
+
+            # Update full potential
+            phi = self(t)
+            im_full.set_array(phi.T.ravel())
+            ax_full.set_title(f"Full potential at t = {t * 1e9:.2f} ns")
+
+            # Update trajectory (show all points up to current frame)
+            x_traj_nm = tracking_result["x"][:frame+1] * 1e9
+            y_traj_nm = tracking_result["y"][:frame+1] * 1e9
+            traj_line.set_data(x_traj_nm, y_traj_nm)
+
+            # Update current position marker
+            current_marker.set_data([x_center_nm], [y_center_nm])
+
+            # Update extraction box position
+            extraction_box.set_xy(
+                (x_center_nm - region_size_nm / 2, y_center_nm - region_size_nm / 2)
+            )
+
+            # Extract local region and solve
+            phi_local, x_local, y_local = self._extract_local_region(
+                phi, x_full, y_full, x_center, y_center, region_size
+            )
+
+            solver = SchrodingerSolver2D(phi_local, dx, dy, effective_mass)
+            energies, psi = solver.solve(n_states=n_states)
+            prob_density = solver.compute_probability_density(psi[0])
+
+            # Clear and redraw local wavefunction plot
+            x_local_nm = x_local * 1e9
+            y_local_nm = y_local * 1e9
+            ax_local.clear()
+            ax_local.pcolormesh(
+                x_local_nm,
+                y_local_nm,
+                prob_density.T,
+                shading="auto",
+                cmap=colormaps.get_cmap("viridis"),
+            )
+            ax_local.set_xlabel("x (nm)")
+            ax_local.set_ylabel("y (nm)")
+            ax_local.set_aspect("equal")
+
+            title_str = f"|ψ₀|² (local) at t = {t * 1e9:.2f} ns\nE₀ = {energies[0]:.4f} eV"
+            if n_states >= 2:
+                energy_gap = energies[1] - energies[0]
+                title_str += f", ΔE = {energy_gap * 1e3:.2f} meV"
+                energy_gap_history.append(energy_gap * 1e3)  # Convert to meV
+            ax_local.set_title(title_str)
+
+            # Update time history
+            t_history.append(t)
+
+            # Update energy gap plot
+            if show_energy and n_states >= 2:
+                line_energy.set_data(np.array(t_history) * 1e9, energy_gap_history)
+                # Auto-scale y-axis starting from 0
+                if len(energy_gap_history) > 1:
+                    gap_max = max(energy_gap_history)
+                    margin = 0.1 * gap_max if gap_max > 0 else 0.1
+                    ax_energy.set_ylim(0, gap_max + margin)
+
+        # Create animation
+        print(f"Creating animation with {len(t_array)} frames...")
+        anim = FuncAnimation(
+            fig,
+            update,
+            frames=len(t_array),
+            interval=1000 / fps,
+            blit=False,
+            repeat=True,
+        )
+
+        plt.tight_layout()
+
+        # Save if path provided
+        if save_path:
+            print(f"Saving animation to: {save_path}")
+            if save_path.endswith(".gif"):
+                anim.save(save_path, writer="pillow", fps=fps)
+            elif save_path.endswith(".mp4"):
+                anim.save(save_path, writer="ffmpeg", fps=fps)
+            else:
+                anim.save(save_path, fps=fps)
+            print("Animation saved successfully")
+
+        return anim
+
+    def _extract_local_region(
+        self,
+        phi: np.ndarray,
+        x_grid: np.ndarray,
+        y_grid: np.ndarray,
+        x_center: float,
+        y_center: float,
+        region_size: float,
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Extract local region around a center point
+
+        Parameters
+        ----------
+        phi : np.ndarray
+            Full 2D potential array, shape (nx, ny)
+        x_grid, y_grid : np.ndarray
+            Full coordinate arrays
+        x_center, y_center : float
+            Center position (m)
+        region_size : float
+            Size of region to extract (m)
+
+        Returns
+        -------
+        phi_local : np.ndarray
+            Extracted potential, shape (nx_local, ny_local)
+        x_local : np.ndarray
+            Local x coordinates
+        y_local : np.ndarray
+            Local y coordinates
+        """
+        # Find index range
+        half_size = region_size / 2
+
+        x_min = x_center - half_size
+        x_max = x_center + half_size
+        y_min = y_center - half_size
+        y_max = y_center + half_size
+
+        # Find indices
+        x_idx_min = np.searchsorted(x_grid, x_min)
+        x_idx_max = np.searchsorted(x_grid, x_max)
+        y_idx_min = np.searchsorted(y_grid, y_min)
+        y_idx_max = np.searchsorted(y_grid, y_max)
+
+        # Ensure at least a few points
+        x_idx_min = max(0, x_idx_min)
+        x_idx_max = min(len(x_grid), x_idx_max)
+        y_idx_min = max(0, y_idx_min)
+        y_idx_max = min(len(y_grid), y_idx_max)
+
+        # Extract
+        phi_local = phi[x_idx_min:x_idx_max, y_idx_min:y_idx_max]
+        x_local = x_grid[x_idx_min:x_idx_max]
+        y_local = y_grid[y_idx_min:y_idx_max]
+
+        return phi_local, x_local, y_local
 
     def __repr__(self) -> str:
         """String representation"""
