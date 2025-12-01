@@ -22,7 +22,7 @@ electrodes:
     shape: "rectangle"
     x_range: [10e-9, 20e-9]
     y_range: [10e-9, 40e-9]
-    z_position: -5e-9
+    z_position: -2e-9
     voltage: -1.0
 
   - name: "gate_2"
