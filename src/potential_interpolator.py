@@ -165,20 +165,8 @@ class PotentialInterpolator:
         self.electrode_names = [e["name"] for e in structure_manager.electrodes]
         self.n_electrodes = len(self.electrode_names)
 
-        # Store grid dimensions
-        self.nx = structure_manager.nx
-        self.ny = structure_manager.ny
-        self.nz = structure_manager.nz
-
-        # Store coordinates
-        self.x = x_coords
-        self.y = y_coords
-
-        # Store grid spacing and domain size
-        self.dx = structure_manager.h  # Grid spacing (isotropic)
-        self.dy = structure_manager.h
-        self.Lx = structure_manager.size_x
-        self.Ly = structure_manager.size_y
+        # Setup grid coordinates (removes ghost points for periodic boundaries)
+        self._setup_grid_coordinates(structure_manager, x_coords, y_coords)
 
         # Store original electrode voltages for restoration
         self._original_voltages = [e["voltage"] for e in structure_manager.electrodes]
@@ -213,6 +201,66 @@ class PotentialInterpolator:
 
         if verbose:
             print("Interpolator initialization complete.")
+
+    def _setup_grid_coordinates(
+        self,
+        structure_manager,
+        x_coords: np.ndarray,
+        y_coords: np.ndarray,
+    ):
+        """Setup grid coordinates with ghost point removal for periodic boundaries
+
+        Parameters
+        ----------
+        structure_manager : StructureManager
+            Structure manager instance
+        x_coords : np.ndarray
+            Full x-coordinate array from structure manager
+        y_coords : np.ndarray
+            Full y-coordinate array from structure manager
+
+        Notes
+        -----
+        For periodic boundaries in x/y, ghost points at indices 0 and -1 are excluded
+        from the interpolator's coordinate arrays. This ensures downstream code
+        (TimeDependentPotential, track_local_minimum, etc.) only works with the
+        physical domain. Z-direction never has periodic boundaries.
+        """
+        # Detect periodic boundary conditions (only x and y can be periodic)
+        bc = structure_manager.boundary_conditions
+        self.x_periodic = bc.get("x_sides", {}).get("type") == "periodic"
+        self.y_periodic = bc.get("y_sides", {}).get("type") == "periodic"
+
+        # X-direction: remove ghost points if periodic
+        if self.x_periodic:
+            self.x = x_coords[1:-1]  # Physical domain: exclude indices 0 and -1
+            self.x_slice = slice(1, -1)
+            self.nx = len(self.x)
+        else:
+            self.x = x_coords
+            self.x_slice = slice(None)
+            self.nx = structure_manager.nx
+
+        # Y-direction: remove ghost points if periodic
+        if self.y_periodic:
+            self.y = y_coords[1:-1]  # Physical domain: exclude indices 0 and -1
+            self.y_slice = slice(1, -1)
+            self.ny = len(self.y)
+        else:
+            self.y = y_coords
+            self.y_slice = slice(None)
+            self.ny = structure_manager.ny
+
+        # Z-direction: never periodic, always use full grid
+        self.nz = structure_manager.nz
+
+        # Store grid spacing
+        self.dx = structure_manager.h  # Isotropic grid spacing
+        self.dy = structure_manager.h
+
+        # Domain size based on physical grid (excluding ghost points)
+        self.Lx = self.nx * self.dx
+        self.Ly = self.ny * self.dy
 
     @staticmethod
     def _find_nearest_z_index(z_coords: np.ndarray, z_target: float) -> int:
@@ -289,7 +337,8 @@ class PotentialInterpolator:
 
         # Extract 2D slice and convert to band edge immediately (computed once)
         # This avoids repeated conversion during interpolation
-        phi_2d = result.phi[self.z_index, :, :]
+        # Note: Exclude ghost points for periodic boundaries
+        phi_2d = result.phi[self.z_index, self.x_slice, self.y_slice]
         if self.carrier_type == "electron":
             # Ec = -φ - χ
             self.particular_band_edge = -phi_2d - self.electron_affinity
@@ -350,7 +399,8 @@ class PotentialInterpolator:
 
             # Extract 2D slice of electrostatic potential φ at z_index
             # Store φ directly without conversion to Ec/Ev (conversion happens in interpolate())
-            self.basis_phi[i, :, :] = result.phi[self.z_index, :, :]
+            # Note: Exclude ghost points for periodic boundaries
+            self.basis_phi[i, :, :] = result.phi[self.z_index, self.x_slice, self.y_slice]
 
     def interpolate(self, voltages: Dict[str, float]) -> np.ndarray:
         """Compute 2D band edge at z_position for given electrode voltages
@@ -461,6 +511,8 @@ class PotentialInterpolator:
             nx=self.nx,
             ny=self.ny,
             nz=self.nz,
+            x_periodic=self.x_periodic,
+            y_periodic=self.y_periodic,
         )
         print(f"Interpolator saved to: {filepath}")
 
@@ -502,6 +554,24 @@ class PotentialInterpolator:
         instance.nx = int(data["nx"])
         instance.ny = int(data["ny"])
         instance.nz = int(data["nz"])
+
+        # Restore periodic boundary flags (backward compatibility)
+        if "x_periodic" in data:
+            instance.x_periodic = bool(data["x_periodic"])
+            instance.y_periodic = bool(data["y_periodic"])
+        else:
+            # Old format: assume non-periodic boundaries
+            warnings.warn(
+                f"Loading old format file {filepath}. "
+                "Assuming non-periodic boundaries. "
+                "Please regenerate the interpolator if you need periodic boundary support."
+            )
+            instance.x_periodic = False
+            instance.y_periodic = False
+
+        # Reconstruct slices based on periodicity
+        instance.x_slice = slice(1, -1) if instance.x_periodic else slice(None)
+        instance.y_slice = slice(1, -1) if instance.y_periodic else slice(None)
 
         print(f"Interpolator loaded from: {filepath}")
         print(f"  Electrodes: {instance.electrode_names}")

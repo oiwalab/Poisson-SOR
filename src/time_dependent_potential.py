@@ -1368,14 +1368,14 @@ class TimeDependentPotential:
         y_center: float,
         region_size: float,
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Extract local region around a center point
+        """Extract local region around a center point with periodic boundary support
 
         Parameters
         ----------
         phi : np.ndarray
             Full 2D potential array, shape (nx, ny)
         x_grid, y_grid : np.ndarray
-            Full coordinate arrays
+            Full coordinate arrays (physical domain, ghost points already excluded)
         x_center, y_center : float
             Center position (m)
         region_size : float
@@ -1385,35 +1385,70 @@ class TimeDependentPotential:
         -------
         phi_local : np.ndarray
             Extracted potential, shape (nx_local, ny_local)
+            For periodic boundaries, wraps around to include opposite side
         x_local : np.ndarray
-            Local x coordinates
+            Local x coordinates (may extend beyond domain for periodic case)
         y_local : np.ndarray
-            Local y coordinates
+            Local y coordinates (may extend beyond domain for periodic case)
+
+        Notes
+        -----
+        For periodic boundaries, if the extraction region extends beyond the domain,
+        it wraps around to the opposite side. For example, if extracting near the
+        right edge, it includes points from the left edge.
         """
-        # Find index range
+        nx, ny = phi.shape
+        dx = x_grid[1] - x_grid[0]
+        dy = y_grid[1] - y_grid[0]
         half_size = region_size / 2
 
+        # Calculate desired extraction range
         x_min = x_center - half_size
         x_max = x_center + half_size
         y_min = y_center - half_size
         y_max = y_center + half_size
 
-        # Find indices
-        x_idx_min = np.searchsorted(x_grid, x_min)
-        x_idx_max = np.searchsorted(x_grid, x_max)
-        y_idx_min = np.searchsorted(y_grid, y_min)
-        y_idx_max = np.searchsorted(y_grid, y_max)
+        # Find center index
+        x_center_idx = np.argmin(np.abs(x_grid - x_center))
+        y_center_idx = np.argmin(np.abs(y_grid - y_center))
 
-        # Ensure at least a few points
-        x_idx_min = max(0, x_idx_min)
-        x_idx_max = min(len(x_grid), x_idx_max)
-        y_idx_min = max(0, y_idx_min)
-        y_idx_max = min(len(y_grid), y_idx_max)
+        # Calculate number of points to extract in each direction
+        n_half_x = int(half_size / dx) + 1
+        n_half_y = int(half_size / dy) + 1
 
-        # Extract
-        phi_local = phi[x_idx_min:x_idx_max, y_idx_min:y_idx_max]
-        x_local = x_grid[x_idx_min:x_idx_max]
-        y_local = y_grid[y_idx_min:y_idx_max]
+        # Check if periodic boundaries are present
+        # (PotentialInterpolator has x_periodic, y_periodic flags)
+        x_periodic = hasattr(self.interpolator, 'x_periodic') and self.interpolator.x_periodic
+        y_periodic = hasattr(self.interpolator, 'y_periodic') and self.interpolator.y_periodic
+
+        # Extract with periodic wrapping if needed
+        if x_periodic:
+            # Use modulo indexing for periodic boundaries
+            x_indices = [(x_center_idx - n_half_x + i) % nx for i in range(2 * n_half_x + 1)]
+            phi_x = phi[x_indices, :]
+
+            # Build coordinate array (may extend beyond domain)
+            x_local = x_grid[x_center_idx] + (np.arange(-n_half_x, n_half_x + 1) * dx)
+        else:
+            # Clip to domain boundaries for non-periodic
+            x_idx_min = max(0, x_center_idx - n_half_x)
+            x_idx_max = min(nx, x_center_idx + n_half_x + 1)
+            phi_x = phi[x_idx_min:x_idx_max, :]
+            x_local = x_grid[x_idx_min:x_idx_max]
+
+        if y_periodic:
+            # Use modulo indexing for periodic boundaries
+            y_indices = [(y_center_idx - n_half_y + i) % ny for i in range(2 * n_half_y + 1)]
+            phi_local = phi_x[:, y_indices]
+
+            # Build coordinate array (may extend beyond domain)
+            y_local = y_grid[y_center_idx] + (np.arange(-n_half_y, n_half_y + 1) * dy)
+        else:
+            # Clip to domain boundaries for non-periodic
+            y_idx_min = max(0, y_center_idx - n_half_y)
+            y_idx_max = min(ny, y_center_idx + n_half_y + 1)
+            phi_local = phi_x[:, y_idx_min:y_idx_max]
+            y_local = y_grid[y_idx_min:y_idx_max]
 
         return phi_local, x_local, y_local
 
