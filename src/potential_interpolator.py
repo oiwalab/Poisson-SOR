@@ -131,10 +131,8 @@ class PotentialInterpolator:
         z_position: float,
         charge_density: Optional[np.ndarray] = None,
         carrier_type: str = "electron",
-        omega: float = 1.8,
-        tolerance: float = 1e-6,
-        max_iterations: int = 10000,
         verbose: int = 1,
+        **solver_params,
     ):
         # Import here to avoid circular dependency
         from structure import StructureManager
@@ -186,11 +184,7 @@ class PotentialInterpolator:
         self._original_voltages = [e["voltage"] for e in structure_manager.electrodes]
 
         # Store solver parameters
-        self._solver_params = {
-            "omega": omega,
-            "tolerance": tolerance,
-            "max_iterations": max_iterations,
-        }
+        self._solver_params = solver_params
 
         # Store material parameters at z_index for band edge conversion
         material_at_z = structure_manager.get_material_at_z(z_index)
