@@ -14,7 +14,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from structure import StructureManager
-from poisson_solver import PoissonSolver
+from poisson import PoissonSolver
 from potential_interpolator import PotentialInterpolator
 
 

@@ -20,7 +20,7 @@ of potential for arbitrary voltage combinations without re-solving.
 Example
 -------
 >>> from structure import StructureManager
->>> from poisson_solver import PoissonSolver
+>>> from poisson import PoissonSolver
 >>> from potential_interpolator import PotentialInterpolator
 >>>
 >>> # Load structure
@@ -136,7 +136,7 @@ class PotentialInterpolator:
     ):
         # Import here to avoid circular dependency
         from structure import StructureManager
-        from poisson_solver import PoissonSolver
+        from poisson import PoissonSolver
 
         # Get coordinate arrays
         x_coords, y_coords, z_coords = structure_manager.get_grid_coordinates()
@@ -312,7 +312,7 @@ class PotentialInterpolator:
         verbose : int
             Print progress
         """
-        from poisson_solver import PoissonSolver
+        from poisson import PoissonSolver
 
         if verbose:
             print("  [1/2] Computing particular solution (all V=0, ρ≠0)...")
@@ -368,7 +368,7 @@ class PotentialInterpolator:
         verbose : int
             Print progress
         """
-        from poisson_solver import PoissonSolver
+        from poisson import PoissonSolver
 
         if verbose:
             print(f"  [2/2] Computing {self.n_electrodes} basis functions (ρ=0)...")

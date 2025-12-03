@@ -11,7 +11,7 @@ from pathlib import Path
 # Add src directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from poisson_solver import PoissonSolver
+from poisson import PoissonSolver
 
 
 class MockStructureManager:
@@ -445,7 +445,7 @@ def test_band_bending_si_sio2():
         result = solver.solve(verbose=False)
 
         # Test 1: Check that result is PoissonResult object
-        from poisson_result import PoissonResult
+        from poisson import PoissonResult
         assert isinstance(result, PoissonResult), "Result should be PoissonResult object"
 
         # Test 2: Check that structure is available

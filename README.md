@@ -50,7 +50,7 @@ uv sync --dev
 
 ```python
 from structure import StructureManager
-from poisson_solver import PoissonSolver
+from poisson import PoissonSolver
 import visualizer as vis
 
 # Load structure from YAML
@@ -273,8 +273,10 @@ uv run jupyter notebook examples/tutorial.ipynb
 ├── src/
 │   ├── materials.py                # Material database (Si, SiO2, etc.)
 │   ├── structure.py                # Structure and grid management
-│   ├── poisson_solver.py           # SOR Poisson solver (JIT compiled)
-│   ├── poisson_result.py           # Results container with band structure
+│   ├── poisson/
+│   │   ├── __init__.py             # Package exports
+│   │   ├── poisson_solver.py      # SOR Poisson solver (JIT compiled)
+│   │   └── poisson_result.py      # Results container with band structure
 │   ├── potential_interpolator.py   # Fast voltage interpolation
 │   ├── time_dependent_potential.py # Time-dependent voltage dynamics
 │   ├── schrodinger.py              # 2D Schrödinger equation solver
