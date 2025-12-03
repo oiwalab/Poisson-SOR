@@ -30,9 +30,15 @@ class PoissonSolver:
     max_iterations : int, optional
         Maximum number of iterations, default=10000
     use_julia : bool, optional
-        Use Julia backend for solving (default=True). Falls back to Numba if Julia unavailable
+        Use Julia backend (True) or Numba backend (False), default=True
     method : str, optional
-        Solver method: "sor" for standard SOR, "redblack" for Red-Black SOR (default="sor")
+        Solver method: "sor" (standard) or "redblack" (parallel-friendly), default="sor"
+    num_threads : int, optional
+        Number of threads for parallel execution (only for method="redblack").
+        None (default): Use system default (typically number of CPU cores).
+        int: Specify exact thread count.
+        Note: For Julia backend, must be set before first PoissonSolver instance creation.
+              For Numba backend, will be used when redblack method is parallelized (future).
     """
 
     def __init__(
@@ -43,6 +49,7 @@ class PoissonSolver:
         max_iterations: int = 10000,
         use_julia: bool = True,
         method: str = "sor",
+        num_threads: Optional[int] = None,
     ):
         self.structure = structure
 
@@ -67,8 +74,9 @@ class PoissonSolver:
 
         self._precompute_z_interfaces()
 
-        # Initialize Julia backend
+        # Initialize backend
         self.method = method
+        self.num_threads = num_threads
         self._use_julia = use_julia
         self.validate_method()
 
@@ -307,6 +315,22 @@ class PoissonSolver:
 
     def _initialize_julia(self):
         """Initialize Julia environment and load solver module"""
+
+        # Set Julia thread count BEFORE importing juliacall
+        if self.num_threads is not None:
+            import sys
+            # juliacall has not been imported yet in a fresh Python session
+            if "juliacall" not in sys.modules:
+                os.environ["JULIA_NUM_THREADS"] = str(self.num_threads)
+                print(f"Setting Julia threads to {self.num_threads}")
+            else:
+                import warnings
+                warnings.warn(
+                    "Julia already initialized. num_threads setting ignored. "
+                    "Set num_threads before creating the first PoissonSolver instance.",
+                    UserWarning
+                )
+
         try:
             from juliacall import Main as jl
 
@@ -332,7 +356,16 @@ class PoissonSolver:
             jl.include(str(julia_file))
 
             self._julia_main = jl
-            print("Julia backend initialized successfully")
+
+            # Report actual thread count for redblack method
+            if self.method.lower() == "redblack":
+                try:
+                    actual_threads = jl.get_num_threads()
+                    print(f"Julia backend initialized successfully with {actual_threads} threads")
+                except Exception:
+                    print("Julia backend initialized successfully")
+            else:
+                print("Julia backend initialized successfully")
 
         except ImportError:
             print("Warning: juliacall not available. Install with: uv add juliacall")
@@ -519,18 +552,21 @@ class PoissonSolver:
 
     def validate_method(self):
         """Validate solver method"""
-        if self._use_julia:
-            valid_methods = ["sor", "redblack"]
-            if self.method.lower() not in valid_methods:
-                raise ValueError(
-                    f"Invalid solver method: {self.method}. Choose from {valid_methods}."
-                )
-        else:
-            if self.method.lower() != "sor":
-                raise ValueError(
-                    "Numba implementation only supports 'sor' method. "
-                    "Set use_julia=True to use 'redblack' method."
-                )
+        valid_methods = ["sor", "redblack"]
+
+        if self.method.lower() not in valid_methods:
+            raise ValueError(
+                f"Invalid solver method: {self.method}. Choose from {valid_methods}."
+            )
+
+        # Numba backend: redblack not yet parallelized
+        if not self._use_julia and self.method.lower() == "redblack":
+            import warnings
+            warnings.warn(
+                "Red-Black method with Numba backend is not yet parallelized. "
+                "It will run sequentially. Use use_julia=True for parallel execution.",
+                UserWarning
+            )
 
 
 @njit

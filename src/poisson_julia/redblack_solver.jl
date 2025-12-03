@@ -5,6 +5,8 @@ Solves Poisson equation -∇⋅(ε∇φ)=ρ for systems with non-uniform permitt
 Uses Red-Black ordering for parallelization-friendly iteration.
 """
 
+using Base.Threads
+
 """
     sor_iteration_red!(phi, rho, epsilon, eps_z_array, electrode_mask, h, omega, epsilon_0)
 
@@ -36,7 +38,8 @@ function sor_iteration_red!(
 
     # Note: Julia uses 1-based indexing
     # Python range(1, nz-1) becomes 2:nz-1 in Julia
-    for k in 2:nz-1
+    # Parallelize over k (z-direction) for independent red point updates
+    @threads for k in 2:nz-1
         eps_k = epsilon[k, 1, 1]
 
         # eps_z_array in Python has length (nz-1)
@@ -105,7 +108,8 @@ function sor_iteration_black!(
 
     # Note: Julia uses 1-based indexing
     # Python range(1, nz-1) becomes 2:nz-1 in Julia
-    for k in 2:nz-1
+    # Parallelize over k (z-direction) for independent black point updates
+    @threads for k in 2:nz-1
         eps_k = epsilon[k, 1, 1]
 
         # eps_z_array in Python has length (nz-1)
@@ -381,4 +385,14 @@ function solve_poisson(
     )
 
     return phi, info
+end
+
+
+"""
+    get_num_threads()
+
+Return the number of threads Julia is using for parallel execution.
+"""
+function get_num_threads()
+    return Threads.nthreads()
 end
