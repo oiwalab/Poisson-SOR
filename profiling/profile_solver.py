@@ -17,8 +17,16 @@ from structure import StructureManager
 from poisson import PoissonSolver
 
 
-def run_solver(config_path: Path):
-    """Run the Poisson solver for profiling"""
+def run_solver(config_path: Path, method: str = "sor"):
+    """Run the Poisson solver for profiling
+
+    Parameters
+    ----------
+    config_path : Path
+        Path to configuration YAML file
+    method : str
+        SOR method to use: "sor" (standard) or "redblack" (Red-Black SOR)
+    """
     print("=" * 60)
     print("Profiling Poisson Solver")
     print("=" * 60)
@@ -30,9 +38,10 @@ def run_solver(config_path: Path):
 
     # Initialize solver
     print("\n[2] Initializing solver...")
-    solver = PoissonSolver(manager, use_julia=True, method="redblack", omega=1.8)
+    solver = PoissonSolver(manager, method=method, omega=1.8)
 
     print(f"  Grid size: ({manager.nx}, {manager.ny}, {manager.nz})")
+    print(f"  Method: {solver.method}")
     print(f"  Omega: {solver.omega}")
     print(f"  Tolerance: {solver.tolerance:.2e}")
     print(f"  Max iterations: {solver.max_iterations}")
@@ -53,6 +62,18 @@ def run_solver(config_path: Path):
 
 def main():
     """Main profiling function"""
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Profile Poisson solver")
+    parser.add_argument(
+        "--method",
+        type=str,
+        default="sor",
+        choices=["sor", "redblack"],
+        help="SOR method to use (default: sor)",
+    )
+    args = parser.parse_args()
+
     # Setup profiler
     profiler = cProfile.Profile()
 
@@ -60,9 +81,9 @@ def main():
     config_path = Path(__file__).parent / "profile_config.yaml"
 
     # Run with profiling
-    print("Starting profiling...\n")
+    print(f"Starting profiling with method={args.method}...\n")
     profiler.enable()
-    result = run_solver(config_path)
+    result = run_solver(config_path, method=args.method)
     profiler.disable()
 
     # Save profile results with timestamp

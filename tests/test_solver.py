@@ -556,3 +556,188 @@ def test_band_bending_si_sio2():
         # Clean up temporary file
         import os
         os.unlink(config_file)
+
+
+def test_method_parameter_validation():
+    """Test that invalid method parameter raises ValueError"""
+    nz, nx, ny = 10, 10, 10
+    h = 1e-9
+    epsilon = np.ones((nz, nx, ny)) * 11.7
+    boundary_conditions = {
+        "z_top": {"type": "neumann", "value": 0.0},
+        "z_bottom": {"type": "neumann", "value": 0.0},
+        "x_sides": {"type": "neumann", "value": 0.0},
+        "y_sides": {"type": "neumann", "value": 0.0},
+    }
+    structure = MockStructureManager(
+        epsilon_array=epsilon,
+        h=h,
+        boundary_conditions=boundary_conditions,
+    )
+
+    # Valid methods should work
+    solver_sor = PoissonSolver(structure, method="sor")
+    assert solver_sor.method == "sor"
+
+    solver_redblack = PoissonSolver(structure, method="redblack")
+    assert solver_redblack.method == "redblack"
+
+    # Invalid method should raise ValueError
+    with pytest.raises(ValueError, match="Invalid method"):
+        PoissonSolver(structure, method="invalid")
+
+
+def test_redblack_method_convergence():
+    """Test Red-Black SOR method convergence
+
+    Uses same test as test_uniform_dielectric_neumann but with redblack method
+    """
+    nz, nx, ny = 10, 10, 10
+    h = 1e-9
+
+    epsilon = np.ones((nz, nx, ny)) * 11.7
+    boundary_conditions = {
+        "z_top": {"type": "neumann", "value": 0.0},
+        "z_bottom": {"type": "neumann", "value": 0.0},
+        "x_sides": {"type": "neumann", "value": 0.0},
+        "y_sides": {"type": "neumann", "value": 0.0},
+    }
+
+    structure = MockStructureManager(
+        epsilon_array=epsilon,
+        h=h,
+        boundary_conditions=boundary_conditions,
+    )
+
+    # Test Red-Black SOR method
+    solver = PoissonSolver(
+        structure,
+        omega=1.5,
+        tolerance=1e-6,
+        max_iterations=1000,
+        method="redblack",
+    )
+
+    result = solver.solve(verbose=False)
+
+    # With rho=0 and Neumann BC, potential should be constant
+    assert result.phi.std() < 1e-6, (
+        "Red-Black SOR: Potential should be constant with zero charge and Neumann BC"
+    )
+    assert result.info["converged"], "Red-Black SOR should converge"
+    assert result.info["iterations"] >= 1
+
+
+@pytest.mark.parametrize("method", ["sor", "redblack"])
+def test_parallel_plate_both_methods(method):
+    """Test parallel plate capacitor with both SOR methods"""
+    nz, nx, ny = 11, 3, 3
+    h = 2e-9
+
+    epsilon = np.ones((nz, nx, ny)) * 3.9
+    boundary_conditions = {
+        "z_top": {"type": "dirichlet", "value": 1.0},
+        "z_bottom": {"type": "dirichlet", "value": 0.0},
+        "x_sides": {"type": "neumann", "value": 0.0},
+        "y_sides": {"type": "neumann", "value": 0.0},
+    }
+
+    structure = MockStructureManager(
+        epsilon_array=epsilon,
+        h=h,
+        boundary_conditions=boundary_conditions,
+    )
+
+    solver = PoissonSolver(
+        structure,
+        omega=1.5,
+        tolerance=1e-8,
+        max_iterations=5000,
+        method=method,
+    )
+
+    phi_initial = np.zeros((nz, nx, ny))
+    phi_initial[0, :, :] = 1.0
+    phi_initial[-1, :, :] = 0.0
+
+    result = solver.solve(phi_initial=phi_initial, verbose=False)
+
+    # Check convergence
+    assert result.info["converged"], f"{method}: Solver should converge"
+    assert not np.isnan(result.phi).any(), f"{method}: Solution should not contain NaN"
+
+    # Check boundary conditions
+    assert np.abs(result.phi[0, :, :].mean() - 1.0) < 1e-6, (
+        f"{method}: Top boundary should be 1V"
+    )
+    assert np.abs(result.phi[-1, :, :].mean() - 0.0) < 1e-6, (
+        f"{method}: Bottom boundary should be 0V"
+    )
+
+    # Analytical solution
+    k_coords = np.arange(nz)
+    K = nz - 1
+    phi_analytical = 1.0 - k_coords / K
+
+    phi_numerical = result.phi[:, 1, 1]
+    error = np.abs(phi_numerical[1:-1] - phi_analytical[1:-1])
+    max_error = error.max()
+
+    assert max_error < 0.01, (
+        f"{method}: Max error {max_error:.6e} should be < 0.01"
+    )
+
+
+@pytest.mark.parametrize("method", ["sor", "redblack"])
+def test_electrode_volume_both_methods(method):
+    """Test 3D electrode volumes with both SOR methods"""
+    nz, nx, ny = 11, 11, 11
+    h = 10e-9
+
+    epsilon = np.ones((nz, nx, ny)) * 11.7
+
+    electrode_mask = np.zeros((nz, nx, ny), dtype=bool)
+    k_electrode_top = 0
+    k_electrode_bottom = 1
+    electrode_mask[k_electrode_top : k_electrode_bottom + 1, 4:7, 4:7] = True
+
+    electrode_voltages = np.zeros((nz, nx, ny))
+    electrode_voltages[k_electrode_top : k_electrode_bottom + 1, 4:7, 4:7] = -0.5
+
+    boundary_conditions = {
+        "z_top": {"type": "neumann", "value": 0.0},
+        "z_bottom": {"type": "neumann", "value": 0.0},
+        "x_sides": {"type": "neumann", "value": 0.0},
+        "y_sides": {"type": "neumann", "value": 0.0},
+    }
+
+    structure = MockStructureManager(
+        epsilon_array=epsilon,
+        h=h,
+        boundary_conditions=boundary_conditions,
+        electrode_mask=electrode_mask,
+        electrode_voltages=electrode_voltages,
+    )
+
+    solver = PoissonSolver(
+        structure,
+        omega=1.8,
+        tolerance=1e-6,
+        max_iterations=10000,
+        method=method,
+    )
+
+    phi_initial = np.zeros((nz, nx, ny))
+    phi_initial[electrode_mask] = -0.5
+
+    result = solver.solve(phi_initial=phi_initial, verbose=False)
+
+    # Check electrode voltage
+    electrode_phi = result.phi[electrode_mask]
+    assert np.allclose(electrode_phi, -0.5, atol=1e-6), (
+        f"{method}: Electrode potential should be -0.5V"
+    )
+
+    # Check convergence
+    assert result.info["converged"], f"{method}: Solver should converge"
+    assert not np.isnan(result.phi).any(), f"{method}: Solution should not contain NaN"

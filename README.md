@@ -73,6 +73,29 @@ vis.plot_band_diagram_1d(result)
 vis.plot_potential_slice(result.phi, result.x, result.y, result.z, z_index=20)
 ```
 
+### Red-Black SOR Method
+
+For parallel execution on multi-core systems, use Red-Black SOR:
+
+```python
+# Use Red-Black SOR for parallel execution
+solver = PoissonSolver(manager, method="redblack", omega=1.8, tolerance=1e-6)
+result = solver.solve()
+```
+
+**Benefits:**
+- Parallel execution with Numba's `prange`
+- Potential speedup on multi-core CPUs (1.5-2× faster on 8+ cores)
+- Same accuracy and convergence as standard SOR
+- No additional dependencies required
+
+**How it works:**
+Red-Black SOR divides grid points into two groups (Red and Black) based on position parity:
+- Red points: `(k + i + j) % 2 == 0`
+- Black points: `(k + i + j) % 2 == 1`
+
+Since all neighbors of Red points are Black (and vice versa), each color can be updated in parallel without data races.
+
 ### Fast Voltage Interpolation
 
 For rapid computation of potentials at different electrode voltages:
@@ -276,6 +299,7 @@ uv run jupyter notebook examples/tutorial.ipynb
 │   ├── poisson/
 │   │   ├── __init__.py             # Package exports
 │   │   ├── poisson_solver.py      # SOR Poisson solver (JIT compiled)
+│   │   ├── poisson_solver_redblack.py  # Red-Black SOR parallel implementation
 │   │   └── poisson_result.py      # Results container with band structure
 │   ├── potential_interpolator.py   # Fast voltage interpolation
 │   ├── time_dependent_potential.py # Time-dependent voltage dynamics
@@ -381,13 +405,18 @@ Solves the Poisson equation using SOR method.
 
 ```python
 solver = PoissonSolver(
-    manager,             # StructureManager instance (NEW: simplified API)
+    manager,             # StructureManager instance
     omega=1.8,           # SOR relaxation parameter (1 < ω < 2)
     tolerance=1e-6,      # Convergence threshold
-    max_iterations=10000
+    max_iterations=10000,
+    method="sor"         # "sor" (standard) or "redblack" (parallel Red-Black SOR)
 )
 result = solver.solve(rho=None, phi_initial=None, verbose=True)
 ```
+
+**Method parameter:**
+- `"sor"` (default): Standard SOR with sequential updates
+- `"redblack"`: Red-Black SOR with parallel updates (faster on multi-core CPUs)
 
 #### `PoissonResult`
 Container for solution with band structure methods.

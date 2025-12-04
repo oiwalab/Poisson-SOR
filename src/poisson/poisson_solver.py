@@ -7,6 +7,7 @@ import numpy as np
 from typing import Dict, Optional, TYPE_CHECKING
 from numba import njit
 from .poisson_result import PoissonResult
+from .poisson_solver_redblack import _redblack_sor_iteration_jit
 
 if TYPE_CHECKING:
     from structure import StructureManager
@@ -27,6 +28,8 @@ class PoissonSolver:
         Convergence threshold, default=1e-6
     max_iterations : int, optional
         Maximum number of iterations, default=10000
+    method : str, optional
+        SOR method to use: "sor" (standard) or "redblack" (Red-Black SOR), default="sor"
     """
 
     def __init__(
@@ -35,6 +38,7 @@ class PoissonSolver:
         omega: float = 1.8,
         tolerance: float = 1e-6,
         max_iterations: int = 10000,
+        method: str = "sor",
     ):
         self.structure = structure
 
@@ -50,6 +54,11 @@ class PoissonSolver:
         self.omega = omega
         self.tolerance = tolerance
         self.max_iterations = max_iterations
+        self.method = method  # "sor" or "redblack"
+
+        # Validate method parameter
+        if method not in ["sor", "redblack"]:
+            raise ValueError(f"Invalid method '{method}'. Must be 'sor' or 'redblack'")
 
         # Vacuum permittivity (F/m)
         self.epsilon_0 = 8.854187817e-12
@@ -209,20 +218,35 @@ class PoissonSolver:
         else:
             electrode_mask = self.electrode_mask
 
-        # Call JIT-compiled function
-        return _sor_iteration_jit(
-            phi,
-            rho,
-            self.epsilon,
-            self.eps_z_array,
-            electrode_mask,
-            self.h,
-            self.omega,
-            self.epsilon_0,
-            self.nz,
-            self.nx,
-            self.ny,
-        )
+        # Call appropriate JIT-compiled function based on method
+        if self.method == "redblack":
+            return _redblack_sor_iteration_jit(
+                phi,
+                rho,
+                self.epsilon,
+                self.eps_z_array,
+                electrode_mask,
+                self.h,
+                self.omega,
+                self.epsilon_0,
+                self.nz,
+                self.nx,
+                self.ny,
+            )
+        else:  # method == "sor"
+            return _sor_iteration_jit(
+                phi,
+                rho,
+                self.epsilon,
+                self.eps_z_array,
+                electrode_mask,
+                self.h,
+                self.omega,
+                self.epsilon_0,
+                self.nz,
+                self.nx,
+                self.ny,
+            )
 
     def apply_boundary_conditions(self, phi: np.ndarray) -> np.ndarray:
         """Apply boundary conditions
