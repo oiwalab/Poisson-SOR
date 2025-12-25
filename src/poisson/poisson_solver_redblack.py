@@ -12,7 +12,6 @@ def _redblack_sor_iteration_jit(
     phi: np.ndarray,
     rho: np.ndarray,
     epsilon: np.ndarray,
-    eps_z_array: np.ndarray,
     electrode_mask: np.ndarray,
     h: float,
     omega: float,
@@ -35,9 +34,6 @@ def _redblack_sor_iteration_jit(
         Charge density distribution (nz, nx, ny)
     epsilon : np.ndarray
         Permittivity distribution (nz, nx, ny)
-    eps_z_array : np.ndarray
-        Harmonic mean at z-interfaces, shape (nz-1,)
-        eps_z_array[k] is harmonic mean between layer k and k+1
     electrode_mask : np.ndarray
         Electrode mask (nz, nx, ny), True where electrodes exist
     h : float
@@ -66,8 +62,8 @@ def _redblack_sor_iteration_jit(
     # Update Red points (color = 0)
     for k in prange(1, nz - 1):
         eps_k = epsilon[k, 0, 0]
-        eps_zp = eps_z_array[k]
-        eps_zm = eps_z_array[k - 1]
+        eps_zp = epsilon[k, 0, 0]
+        eps_zm = epsilon[k - 1, 0, 0]
 
         az = eps_zp / h2
         bz = eps_zm / h2
@@ -98,8 +94,8 @@ def _redblack_sor_iteration_jit(
     # Update Black points (color = 1)
     for k in prange(1, nz - 1):
         eps_k = epsilon[k, 0, 0]
-        eps_zp = eps_z_array[k]
-        eps_zm = eps_z_array[k - 1]
+        eps_zp = epsilon[k, 0, 0]
+        eps_zm = epsilon[k - 1, 0, 0]
 
         az = eps_zp / h2
         bz = eps_zm / h2

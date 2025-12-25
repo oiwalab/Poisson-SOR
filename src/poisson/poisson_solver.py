@@ -66,7 +66,6 @@ class PoissonSolver:
         # Convergence history (stores phi difference between iterations)
         self.convergence_history = []
 
-        self._precompute_z_interfaces()
 
     def solve(
         self,
@@ -176,32 +175,6 @@ class PoissonSolver:
 
         return result
 
-    def _precompute_z_interfaces(self):
-        """Precompute harmonic mean of permittivity at z-direction interfaces
-
-        For heterostructure applications where permittivity is uniform in x,y
-        but varies in z direction. Detects interfaces where epsilon[k] != epsilon[k+1]
-        and precomputes harmonic mean values to avoid repeated calculations during iteration.
-
-        Stores results in self.eps_z_interfaces as:
-        {k: eps_interface} where eps_interface is harmonic mean between layer k and k+1
-
-        Also creates self.eps_z_array (nz-1,) for JIT function:
-        eps_z_array[k] is harmonic mean between layer k and k+1
-        """
-        self.eps_z_interfaces = {}
-        self.eps_z_array = np.zeros(self.nz - 1)
-
-        for k in range(self.nz - 1):
-            eps_k = self.epsilon[k, 0, 0]
-            eps_kp = self.epsilon[k + 1, 0, 0]
-
-            if eps_k != eps_kp:
-                eps_harmonic = 2 * eps_k * eps_kp / (eps_k + eps_kp)
-                self.eps_z_interfaces[k] = eps_harmonic
-                self.eps_z_array[k] = eps_harmonic
-            else:
-                self.eps_z_array[k] = eps_k
 
     def _sor_iteration(self, phi: np.ndarray, rho: np.ndarray) -> np.ndarray:
         """Single iteration update using SOR method
@@ -224,7 +197,6 @@ class PoissonSolver:
                 phi,
                 rho,
                 self.epsilon,
-                self.eps_z_array,
                 electrode_mask,
                 self.h,
                 self.omega,
@@ -238,7 +210,6 @@ class PoissonSolver:
                 phi,
                 rho,
                 self.epsilon,
-                self.eps_z_array,
                 electrode_mask,
                 self.h,
                 self.omega,
@@ -307,57 +278,6 @@ class PoissonSolver:
 
         return phi_new
 
-    def apply_surface_boundary(self, phi: np.ndarray) -> np.ndarray:
-        """Apply mixed boundary conditions at surface
-
-        At electrode positions: Dirichlet boundary condition (fixed voltage)
-        At non-electrode positions: Neumann boundary condition (d_phi/d_z = 0)
-
-        Parameters
-        ----------
-        phi : np.ndarray
-            Potential distribution
-
-        Returns
-        -------
-        phi_new : np.ndarray
-            Potential distribution after applying boundary conditions
-        """
-        phi_new = phi.copy()
-        k_surface = -1  # z-direction index of surface
-
-        if self.electrode_mask is None or self.electrode_voltages is None:
-            # Use default Neumann boundary condition if no electrode info
-            default_value = self.boundary_conditions.get("z_top", {}).get(
-                "default_neumann_value", 0.0
-            )
-            if default_value == 0.0:
-                phi_new[:, :, k_surface] = phi_new[:, :, k_surface - 1]
-            else:
-                phi_new[:, :, k_surface] = (
-                    phi_new[:, :, k_surface - 1] + default_value * self.h
-                )
-            return phi_new
-
-        # Apply boundary conditions at each grid point
-        for i in range(self.nx):
-            for j in range(self.ny):
-                if self.electrode_mask[i, j, k_surface]:
-                    # If electrode exists: Dirichlet boundary condition
-                    phi_new[i, j, k_surface] = self.electrode_voltages[i, j, k_surface]
-                else:
-                    # If no electrode: Neumann boundary condition (d_phi/d_z = 0)
-                    default_value = self.boundary_conditions.get("z_top", {}).get(
-                        "default_neumann_value", 0.0
-                    )
-                    if default_value == 0.0:
-                        phi_new[i, j, k_surface] = phi_new[i, j, k_surface - 1]
-                    else:
-                        phi_new[i, j, k_surface] = (
-                            phi_new[i, j, k_surface - 1] + default_value * self.h
-                        )
-
-        return phi_new
 
     def compute_residual(self, phi: np.ndarray, rho: np.ndarray) -> float:
         """Compute residual
@@ -373,8 +293,8 @@ class PoissonSolver:
         for k in range(1, self.nz - 1):
             eps_k = self.epsilon[k, 0, 0]
 
-            eps_zp = self.eps_z_interfaces.get(k, eps_k)
-            eps_zm = self.eps_z_interfaces.get(k - 1, eps_k)
+            eps_zp = self.epsilon[k, 0, 0]
+            eps_zm = self.epsilon[k - 1, 0, 0]
 
             for i in range(1, self.nx - 1):
                 for j in range(1, self.ny - 1):
@@ -401,7 +321,6 @@ def _sor_iteration_jit(
     phi: np.ndarray,
     rho: np.ndarray,
     epsilon: np.ndarray,
-    eps_z_array: np.ndarray,
     electrode_mask: np.ndarray,
     h: float,
     omega: float,
@@ -420,9 +339,6 @@ def _sor_iteration_jit(
         Charge density distribution (nz, nx, ny)
     epsilon : np.ndarray
         Permittivity distribution (nz, nx, ny)
-    eps_z_array : np.ndarray
-        Harmonic mean at z-interfaces, shape (nz-1,)
-        eps_z_array[k] is harmonic mean between layer k and k+1
     electrode_mask : np.ndarray
         Electrode mask (nz, nx, ny), True where electrodes exist
     h : float
@@ -444,8 +360,8 @@ def _sor_iteration_jit(
     for k in range(1, nz - 1):
         eps_k = epsilon[k, 0, 0]
 
-        eps_zp = eps_z_array[k]
-        eps_zm = eps_z_array[k - 1]
+        eps_zp = epsilon[k, 0, 0]
+        eps_zm = epsilon[k - 1, 0, 0]
 
         az = eps_zp / h2
         bz = eps_zm / h2
