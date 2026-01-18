@@ -336,7 +336,7 @@ def test_point_charge():
     ratio_phi = phi1 / phi2
     ratio_r = r2 / r1  # Should be 2.0
 
-    print(f"\nDistance dependence (phi proportional to 1/r):")
+    print("\nDistance dependence (phi proportional to 1/r):")
     print(f"phi(5nm) = {phi1:.6e} V")
     print(f"phi(10nm) = {phi2:.6e} V")
     print(f"phi1/phi2 = {ratio_phi:.3f} (expected: {ratio_r:.3f})")
@@ -740,4 +740,286 @@ def test_electrode_volume_both_methods(method):
 
     # Check convergence
     assert result.info["converged"], f"{method}: Solver should converge"
-    assert not np.isnan(result.phi).any(), f"{method}: Solution should not contain NaN"
+    assert not np.isnan(result.phi).any(), f"{method}: No NaN values"
+
+
+# =============================================================================
+# Julia Backend Tests
+# =============================================================================
+
+
+def _julia_available():
+    """Check if Julia backend is available"""
+    import importlib.util
+
+    return importlib.util.find_spec("juliacall") is not None
+
+
+JULIA_AVAILABLE = _julia_available()
+
+
+@pytest.mark.skipif(not JULIA_AVAILABLE, reason="Julia backend not available")
+class TestJuliaBackend:
+    """Tests for Julia backend functionality"""
+
+    @pytest.fixture
+    def simple_structure(self):
+        """Create a simple structure for testing"""
+        nz, nx, ny = 11, 5, 5
+        h = 2e-9
+        epsilon = np.ones((nz, nx, ny)) * 3.9
+
+        boundary_conditions = {
+            "z_top": {"type": "dirichlet", "value": 1.0},
+            "z_bottom": {"type": "dirichlet", "value": 0.0},
+            "x_sides": {"type": "neumann", "value": 0.0},
+            "y_sides": {"type": "neumann", "value": 0.0},
+        }
+
+        return MockStructureManager(
+            epsilon_array=epsilon,
+            h=h,
+            boundary_conditions=boundary_conditions,
+        )
+
+    def test_julia_backend_initialization(self, simple_structure):
+        """Test that Julia backend initializes correctly"""
+        solver = PoissonSolver(
+            simple_structure,
+            method="sor",
+            use_julia=True,
+            max_iterations=10,
+        )
+
+        assert solver._use_julia, "Julia backend should be enabled"
+        assert solver._julia_main is not None, "Julia main should be initialized"
+
+    def test_julia_thread_count(self, simple_structure):
+        """Test that Julia reports thread count"""
+        solver = PoissonSolver(
+            simple_structure,
+            method="redblack",
+            use_julia=True,
+            max_iterations=10,
+        )
+
+        if solver._use_julia and solver._julia_main is not None:
+            num_threads = solver._julia_main.get_num_threads()
+            assert num_threads >= 1, "Julia should have at least 1 thread"
+            print(f"Julia is using {num_threads} threads")
+
+    @pytest.mark.parametrize("method", ["sor", "redblack"])
+    def test_julia_parallel_plate(self, simple_structure, method):
+        """Test Julia backend with parallel plate capacitor"""
+        nz = simple_structure.nz
+
+        solver = PoissonSolver(
+            simple_structure,
+            omega=1.5,
+            tolerance=1e-8,
+            max_iterations=5000,
+            method=method,
+            use_julia=True,
+        )
+
+        phi_initial = np.zeros((nz, simple_structure.nx, simple_structure.ny))
+        phi_initial[0, :, :] = 1.0
+        phi_initial[-1, :, :] = 0.0
+
+        result = solver.solve(phi_initial=phi_initial, verbose=False)
+
+        # Check convergence
+        assert result.info["converged"], f"Julia {method}: Solver should converge"
+        assert not np.isnan(result.phi).any(), f"Julia {method}: No NaN values"
+
+        # Check boundary conditions
+        assert np.abs(result.phi[0, :, :].mean() - 1.0) < 1e-6, (
+            f"Julia {method}: Top boundary should be 1V"
+        )
+        assert np.abs(result.phi[-1, :, :].mean() - 0.0) < 1e-6, (
+            f"Julia {method}: Bottom boundary should be 0V"
+        )
+
+        # Check analytical solution
+        k_coords = np.arange(nz)
+        K = nz - 1
+        phi_analytical = 1.0 - k_coords / K
+
+        phi_numerical = result.phi[:, 2, 2]
+        error = np.abs(phi_numerical[1:-1] - phi_analytical[1:-1])
+        max_error = error.max()
+
+        assert max_error < 0.01, (
+            f"Julia {method}: Max error {max_error:.6e} should be < 0.01"
+        )
+
+    @pytest.mark.parametrize("method", ["sor", "redblack"])
+    def test_julia_vs_numba_consistency(self, simple_structure, method):
+        """Test that Julia and Numba backends produce consistent results"""
+        nz, nx, ny = simple_structure.nz, simple_structure.nx, simple_structure.ny
+
+        phi_initial = np.zeros((nz, nx, ny))
+        phi_initial[0, :, :] = 1.0
+        phi_initial[-1, :, :] = 0.0
+
+        # Solve with Numba
+        solver_numba = PoissonSolver(
+            simple_structure,
+            omega=1.5,
+            tolerance=1e-8,
+            max_iterations=5000,
+            method=method,
+            use_julia=False,
+        )
+        result_numba = solver_numba.solve(phi_initial=phi_initial.copy(), verbose=False)
+
+        # Solve with Julia
+        solver_julia = PoissonSolver(
+            simple_structure,
+            omega=1.5,
+            tolerance=1e-8,
+            max_iterations=5000,
+            method=method,
+            use_julia=True,
+        )
+        result_julia = solver_julia.solve(phi_initial=phi_initial.copy(), verbose=False)
+
+        # Compare results
+        max_diff = np.max(np.abs(result_numba.phi - result_julia.phi))
+
+        print(f"\n{method} backend comparison:")
+        print(f"  Numba iterations: {result_numba.info['iterations']}")
+        print(f"  Julia iterations: {result_julia.info['iterations']}")
+        print(f"  Max difference: {max_diff:.2e}")
+
+        # Allow some tolerance due to floating point differences
+        assert max_diff < 1e-6, (
+            f"{method}: Numba and Julia results should be consistent, "
+            f"but max diff is {max_diff:.2e}"
+        )
+
+    def test_julia_electrode_volume(self):
+        """Test Julia backend with 3D electrode volumes"""
+        nz, nx, ny = 11, 11, 11
+        h = 10e-9
+
+        epsilon = np.ones((nz, nx, ny)) * 11.7
+
+        electrode_mask = np.zeros((nz, nx, ny), dtype=bool)
+        electrode_mask[0:2, 4:7, 4:7] = True
+
+        electrode_voltages = np.zeros((nz, nx, ny))
+        electrode_voltages[0:2, 4:7, 4:7] = -0.5
+
+        boundary_conditions = {
+            "z_top": {"type": "neumann", "value": 0.0},
+            "z_bottom": {"type": "neumann", "value": 0.0},
+            "x_sides": {"type": "neumann", "value": 0.0},
+            "y_sides": {"type": "neumann", "value": 0.0},
+        }
+
+        structure = MockStructureManager(
+            epsilon_array=epsilon,
+            h=h,
+            boundary_conditions=boundary_conditions,
+            electrode_mask=electrode_mask,
+            electrode_voltages=electrode_voltages,
+        )
+
+        solver = PoissonSolver(
+            structure,
+            omega=1.8,
+            tolerance=1e-6,
+            max_iterations=10000,
+            method="redblack",
+            use_julia=True,
+        )
+
+        phi_initial = np.zeros((nz, nx, ny))
+        phi_initial[electrode_mask] = -0.5
+
+        result = solver.solve(phi_initial=phi_initial, verbose=False)
+
+        # Check electrode voltage
+        electrode_phi = result.phi[electrode_mask]
+        assert np.allclose(electrode_phi, -0.5, atol=1e-6), (
+            "Julia: Electrode potential should be -0.5V"
+        )
+
+        assert result.info["converged"], "Julia: Solver should converge"
+
+    def test_julia_neumann_bc(self):
+        """Test Julia backend with all Neumann boundary conditions"""
+        nz, nx, ny = 10, 10, 10
+        h = 1e-9
+
+        epsilon = np.ones((nz, nx, ny)) * 11.7
+        boundary_conditions = {
+            "z_top": {"type": "neumann", "value": 0.0},
+            "z_bottom": {"type": "neumann", "value": 0.0},
+            "x_sides": {"type": "neumann", "value": 0.0},
+            "y_sides": {"type": "neumann", "value": 0.0},
+        }
+
+        structure = MockStructureManager(
+            epsilon_array=epsilon,
+            h=h,
+            boundary_conditions=boundary_conditions,
+        )
+
+        solver = PoissonSolver(
+            structure,
+            omega=1.5,
+            tolerance=1e-6,
+            max_iterations=1000,
+            method="sor",
+            use_julia=True,
+        )
+
+        result = solver.solve(verbose=False)
+
+        # With rho=0 and Neumann BC, potential should be constant
+        assert result.phi.std() < 1e-6, (
+            "Julia: Potential should be constant with zero charge and Neumann BC"
+        )
+        assert result.info["converged"], "Julia: Solver should converge"
+
+    def test_julia_periodic_bc(self):
+        """Test Julia backend with periodic boundary conditions"""
+        nz, nx, ny = 10, 10, 10
+        h = 1e-9
+
+        epsilon = np.ones((nz, nx, ny)) * 11.7
+        boundary_conditions = {
+            "z_top": {"type": "dirichlet", "value": 1.0},
+            "z_bottom": {"type": "dirichlet", "value": 0.0},
+            "x_sides": {"type": "periodic"},
+            "y_sides": {"type": "periodic"},
+        }
+
+        structure = MockStructureManager(
+            epsilon_array=epsilon,
+            h=h,
+            boundary_conditions=boundary_conditions,
+        )
+
+        solver = PoissonSolver(
+            structure,
+            omega=1.5,
+            tolerance=1e-6,
+            max_iterations=1000,
+            method="sor",
+            use_julia=True,
+        )
+
+        result = solver.solve(verbose=False)
+
+        # Check that periodic BC is applied (edges should match)
+        assert np.allclose(result.phi[:, 0, :], result.phi[:, -2, :], atol=1e-6), (
+            "Julia: x periodic BC should make edges equal"
+        )
+        assert np.allclose(result.phi[:, :, 0], result.phi[:, :, -2], atol=1e-6), (
+            "Julia: y periodic BC should make edges equal"
+        )
+
+        assert result.info["converged"], "Julia: Solver should converge"

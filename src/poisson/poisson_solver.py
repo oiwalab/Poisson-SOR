@@ -3,9 +3,10 @@
 Solves Poisson equation -∇⋅(ε∇φ)=ρ for systems with non-uniform permittivity
 """
 
+import os
+from pathlib import Path
 import numpy as np
 from typing import Dict, Optional, TYPE_CHECKING
-from numba import njit
 from .poisson_result import PoissonResult
 from .core import _sor_iteration_jit, _redblack_sor_iteration_jit
 
@@ -30,6 +31,11 @@ class PoissonSolver:
         Maximum number of iterations, default=10000
     method : str, optional
         SOR method to use: "sor" (standard) or "redblack" (Red-Black SOR), default="sor"
+    use_julia : bool, optional
+        Use Julia backend for faster computation, default=False
+    num_threads : int, optional
+        Number of threads for Julia parallel execution. Must be set before
+        first PoissonSolver instantiation. If None, uses Julia default.
     """
 
     def __init__(
@@ -39,6 +45,8 @@ class PoissonSolver:
         tolerance: float = 1e-6,
         max_iterations: int = 10000,
         method: str = "sor",
+        use_julia: bool = False,
+        num_threads: Optional[int] = None,
     ):
         self.structure = structure
 
@@ -54,7 +62,6 @@ class PoissonSolver:
         self.omega = omega
         self.tolerance = tolerance
         self.max_iterations = max_iterations
-        self.method = method  # "sor" or "redblack"
 
         # Validate method parameter
         if method not in ["sor", "redblack"]:
@@ -66,8 +73,121 @@ class PoissonSolver:
         # Convergence history (stores phi difference between iterations)
         self.convergence_history = []
 
+        # Initialize backend
+        self.method = method.lower()
+        self.num_threads = num_threads
+        self._use_julia = use_julia
+        self.validate_method()
+
+        self._julia_main = None
+        if self._use_julia:
+            self._initialize_julia()
+
+    def validate_method(self):
+        """Validate solver method"""
+        valid_methods = ["sor", "redblack"]
+
+        if self.method.lower() not in valid_methods:
+            raise ValueError(
+                f"Invalid solver method: {self.method}. Choose from {valid_methods}."
+            )
+
+    def _initialize_julia(self):
+        """Initialize Julia environment and load solver module"""
+
+        # Set Julia thread count BEFORE importing juliacall
+        if self.num_threads is not None:
+            import sys
+
+            # juliacall has not been imported yet in a fresh Python session
+            if "juliacall" not in sys.modules:
+                os.environ["JULIA_NUM_THREADS"] = str(self.num_threads)
+                print(f"Setting Julia threads to {self.num_threads}")
+            else:
+                import warnings
+
+                warnings.warn(
+                    "Julia already initialized. num_threads setting ignored. "
+                    "Set num_threads before creating the first PoissonSolver instance.",
+                    UserWarning,
+                )
+
+        try:
+            from juliacall import Main as jl
+
+            # # Get path to Julia source file
+            # if self.method.lower() == "sor":
+            #     julia_file = Path(__file__).parent / "poisson_julia" / "sor_solver.jl"
+            # elif self.method.lower() == "redblack":
+            #     julia_file = (
+            #         Path(__file__).parent / "poisson_julia" / "redblack_solver.jl"
+            #     )
+            # else:
+            #     raise ValueError(
+            #         f"Invalid solver method: {self.method}. Choose 'sor' or 'redblack'."
+            #     )
+
+            julia_file = Path(__file__).parent / "julia_backend" / "base_solver.jl"
+
+            if not julia_file.exists():
+                print(f"Warning: Julia solver file not found at {julia_file}")
+                print("Falling back to Numba implementation")
+                self._use_julia = False
+                return
+
+            # Load Julia source file
+            jl.include(str(julia_file))
+
+            self._julia_main = jl
+
+            # Report actual thread count for redblack method
+            try:
+                actual_threads = jl.get_num_threads()
+                print(
+                    f"Julia backend initialized successfully with {actual_threads} threads"
+                )
+            except Exception:
+                print("Julia backend initialized successfully")
+
+        except ImportError:
+            print("Warning: juliacall not available. Install with: uv add juliacall")
+            print("Falling back to Numba implementation")
+            self._use_julia = False
+        except Exception as e:
+            print(f"Warning: Failed to initialize Julia backend: {e}")
+            print("Falling back to Numba implementation")
+            self._use_julia = False
 
     def solve(
+        self,
+        rho: Optional[np.ndarray] = None,
+        phi_initial: Optional[np.ndarray] = None,
+        verbose: bool = True,
+    ) -> PoissonResult:
+        """Solve the Poisson equation using selected backend
+
+        Parameters
+        ----------
+        rho : np.ndarray, optional
+            Charge density distribution (C/m^3), shape=(nz, nx, ny)
+            Treated as zero if None
+        phi_initial : np.ndarray, optional
+            Initial potential distribution (V)
+        verbose : bool, optional
+            Print convergence progress (default: True)
+
+        Returns
+        -------
+        result : PoissonResult
+            PoissonResult object containing phi, coordinates, materials, and convergence info
+        """
+        # Use Julia backend if available
+        if self._use_julia and self._julia_main is not None:
+            return self._solve_julia(rho, phi_initial, verbose)
+        else:
+            return self._solve_python(rho, phi_initial, verbose)
+
+    def _solve_python(
         self,
         rho: Optional[np.ndarray] = None,
         phi_initial: Optional[np.ndarray] = None,
@@ -151,6 +271,91 @@ class PoissonSolver:
         }
         return self._create_solver_result(phi, info)
 
+    def _solve_julia(
+        self,
+        rho: Optional[np.ndarray] = None,
+        phi_initial: Optional[np.ndarray] = None,
+        verbose: bool = True,
+    ) -> PoissonResult:
+        """Solve the Poisson equation using Julia backend
+
+        Parameters
+        ----------
+        rho : np.ndarray, optional
+            Charge density distribution (C/m^3), shape=(nz, nx, ny)
+            Treated as zero if None
+        phi_initial : np.ndarray, optional
+            Initial potential distribution (V)
+        verbose : bool, optional
+            Print convergence progress (default: True)
+
+        Returns
+        -------
+        result : PoissonResult
+            PoissonResult object containing phi, coordinates, materials, and convergence info
+        """
+        # Initialize charge density
+        if rho is None:
+            rho = np.zeros((self.nz, self.nx, self.ny))
+
+        # Initialize potential
+        if phi_initial is None:
+            phi_initial = np.zeros((self.nz, self.nx, self.ny))
+
+        # Prepare electrode data
+        if self.electrode_mask is None:
+            electrode_mask = np.zeros((self.nz, self.nx, self.ny), dtype=np.bool_)
+            electrode_voltages = np.zeros((self.nz, self.nx, self.ny))
+        else:
+            electrode_mask = self.electrode_mask
+            electrode_voltages = self.electrode_voltages
+
+        # Convert numpy arrays to Julia arrays
+        jl = self._julia_main
+        phi_initial_jl = jl.Array(phi_initial)
+        rho_jl = jl.Array(rho)
+        epsilon_jl = jl.Array(self.epsilon)
+        electrode_mask_jl = jl.Array(electrode_mask)
+        electrode_voltages_jl = jl.Array(electrode_voltages)
+
+        # Select Julia method type
+        if self.method == "redblack":
+            _method = jl.RedBlack()
+        elif self.method == "sor":
+            _method = jl.SOR()
+
+        # Call Julia solver
+        phi_result, info_dict = jl.solve_poisson(
+            phi_initial_jl,
+            rho_jl,
+            epsilon_jl,
+            electrode_mask_jl,
+            electrode_voltages_jl,
+            self.boundary_conditions,
+            self.h,
+            self.omega,
+            self.epsilon_0,
+            self.tolerance,
+            self.max_iterations,
+            _method,
+            verbose,
+        )
+
+        # Convert Julia arrays back to numpy
+        phi_final = np.array(phi_result)
+
+        # Store convergence history
+        self.convergence_history = list(info_dict["convergence_history"])
+
+        # Create info dict for PoissonResult
+        info = {
+            "converged": bool(info_dict["converged"]),
+            "iterations": int(info_dict["iterations"]),
+            "final_phi_change": float(info_dict["final_phi_change"]),
+        }
+
+        return self._create_solver_result(phi_final, info)
+
     def _create_solver_result(self, phi: np.ndarray, info: Dict) -> PoissonResult:
         """Create PoissonResult object from solution
 
@@ -174,7 +379,6 @@ class PoissonSolver:
         )
 
         return result
-
 
     def _sor_iteration(self, phi: np.ndarray, rho: np.ndarray) -> np.ndarray:
         """Single iteration update using SOR method
@@ -277,7 +481,6 @@ class PoissonSolver:
             phi_new[:, :, -1] = phi_new[:, :, 1]
 
         return phi_new
-
 
     def compute_residual(self, phi: np.ndarray, rho: np.ndarray) -> float:
         """Compute residual
