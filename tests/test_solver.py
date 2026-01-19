@@ -1023,3 +1023,512 @@ class TestJuliaBackend:
         )
 
         assert result.info["converged"], "Julia: Solver should converge"
+
+
+# =============================================================================
+# GPU Backend Tests (CuPy/CUDA)
+# =============================================================================
+
+
+def _gpu_available():
+    """Check if GPU backend is available"""
+    try:
+        import cupy as cp
+
+        return cp.cuda.runtime.getDeviceCount() > 0
+    except (ImportError, Exception):
+        return False
+
+
+GPU_AVAILABLE = _gpu_available()
+
+
+@pytest.mark.skipif(not GPU_AVAILABLE, reason="GPU backend not available")
+class TestGPUBackend:
+    """Tests for GPU backend functionality (CuPy/CUDA)"""
+
+    @pytest.fixture
+    def simple_structure(self):
+        """Create a simple structure for testing"""
+        nz, nx, ny = 11, 5, 5
+        h = 2e-9
+        epsilon = np.ones((nz, nx, ny)) * 3.9
+
+        boundary_conditions = {
+            "z_top": {"type": "dirichlet", "value": 1.0},
+            "z_bottom": {"type": "dirichlet", "value": 0.0},
+            "x_sides": {"type": "neumann", "value": 0.0},
+            "y_sides": {"type": "neumann", "value": 0.0},
+        }
+
+        return MockStructureManager(
+            epsilon_array=epsilon,
+            h=h,
+            boundary_conditions=boundary_conditions,
+        )
+
+    def test_gpu_backend_initialization(self, simple_structure):
+        """Test that GPU backend initializes correctly"""
+        solver = PoissonSolver(
+            simple_structure,
+            method="redblack",
+            use_gpu=True,
+            max_iterations=10,
+        )
+
+        assert solver._use_gpu, "GPU backend should be enabled"
+        assert solver._cp is not None, "CuPy module should be loaded"
+
+    def test_gpu_parallel_plate(self, simple_structure):
+        """Test GPU backend with parallel plate capacitor"""
+        nz = simple_structure.nz
+
+        solver = PoissonSolver(
+            simple_structure,
+            omega=1.5,
+            tolerance=1e-8,
+            max_iterations=5000,
+            method="redblack",
+            use_gpu=True,
+        )
+
+        phi_initial = np.zeros((nz, simple_structure.nx, simple_structure.ny))
+        phi_initial[0, :, :] = 1.0
+        phi_initial[-1, :, :] = 0.0
+
+        result = solver.solve(phi_initial=phi_initial, verbose=False)
+
+        # Check convergence
+        assert result.info["converged"], "GPU: Solver should converge"
+        assert not np.isnan(result.phi).any(), "GPU: No NaN values"
+
+        # Check boundary conditions
+        assert np.abs(result.phi[0, :, :].mean() - 1.0) < 1e-6, (
+            "GPU: Top boundary should be 1V"
+        )
+        assert np.abs(result.phi[-1, :, :].mean() - 0.0) < 1e-6, (
+            "GPU: Bottom boundary should be 0V"
+        )
+
+        # Check analytical solution
+        k_coords = np.arange(nz)
+        K = nz - 1
+        phi_analytical = 1.0 - k_coords / K
+
+        phi_numerical = result.phi[:, 2, 2]
+        error = np.abs(phi_numerical[1:-1] - phi_analytical[1:-1])
+        max_error = error.max()
+
+        assert max_error < 0.01, f"GPU: Max error {max_error:.6e} should be < 0.01"
+
+    def test_gpu_vs_cpu_consistency(self, simple_structure):
+        """Test that GPU and CPU backends produce consistent results"""
+        nz, nx, ny = simple_structure.nz, simple_structure.nx, simple_structure.ny
+
+        phi_initial = np.zeros((nz, nx, ny))
+        phi_initial[0, :, :] = 1.0
+        phi_initial[-1, :, :] = 0.0
+
+        # Solve with CPU (Numba)
+        solver_cpu = PoissonSolver(
+            simple_structure,
+            omega=1.5,
+            tolerance=1e-8,
+            max_iterations=5000,
+            method="redblack",
+            use_gpu=False,
+        )
+        result_cpu = solver_cpu.solve(phi_initial=phi_initial.copy(), verbose=False)
+
+        # Solve with GPU
+        solver_gpu = PoissonSolver(
+            simple_structure,
+            omega=1.5,
+            tolerance=1e-8,
+            max_iterations=5000,
+            method="redblack",
+            use_gpu=True,
+        )
+        result_gpu = solver_gpu.solve(phi_initial=phi_initial.copy(), verbose=False)
+
+        # Compare results
+        max_diff = np.max(np.abs(result_cpu.phi - result_gpu.phi))
+
+        print("\nGPU vs CPU backend comparison:")
+        print(f"  CPU iterations: {result_cpu.info['iterations']}")
+        print(f"  GPU iterations: {result_gpu.info['iterations']}")
+        print(f"  Max difference: {max_diff:.2e}")
+
+        # Allow some tolerance due to floating point differences
+        assert max_diff < 1e-6, (
+            f"GPU and CPU results should be consistent, but max diff is {max_diff:.2e}"
+        )
+
+    def test_gpu_electrode_volume(self):
+        """Test GPU backend with 3D electrode volumes"""
+        nz, nx, ny = 11, 11, 11
+        h = 10e-9
+
+        epsilon = np.ones((nz, nx, ny)) * 11.7
+
+        electrode_mask = np.zeros((nz, nx, ny), dtype=bool)
+        electrode_mask[0:2, 4:7, 4:7] = True
+
+        electrode_voltages = np.zeros((nz, nx, ny))
+        electrode_voltages[0:2, 4:7, 4:7] = -0.5
+
+        boundary_conditions = {
+            "z_top": {"type": "neumann", "value": 0.0},
+            "z_bottom": {"type": "neumann", "value": 0.0},
+            "x_sides": {"type": "neumann", "value": 0.0},
+            "y_sides": {"type": "neumann", "value": 0.0},
+        }
+
+        structure = MockStructureManager(
+            epsilon_array=epsilon,
+            h=h,
+            boundary_conditions=boundary_conditions,
+            electrode_mask=electrode_mask,
+            electrode_voltages=electrode_voltages,
+        )
+
+        solver = PoissonSolver(
+            structure,
+            omega=1.8,
+            tolerance=1e-6,
+            max_iterations=10000,
+            method="redblack",
+            use_gpu=True,
+        )
+
+        phi_initial = np.zeros((nz, nx, ny))
+        phi_initial[electrode_mask] = -0.5
+
+        result = solver.solve(phi_initial=phi_initial, verbose=False)
+
+        # Check electrode voltage
+        electrode_phi = result.phi[electrode_mask]
+        assert np.allclose(electrode_phi, -0.5, atol=1e-6), (
+            "GPU: Electrode potential should be -0.5V"
+        )
+
+        assert result.info["converged"], "GPU: Solver should converge"
+
+    def test_gpu_neumann_bc(self):
+        """Test GPU backend with all Neumann boundary conditions"""
+        nz, nx, ny = 10, 10, 10
+        h = 1e-9
+
+        epsilon = np.ones((nz, nx, ny)) * 11.7
+        boundary_conditions = {
+            "z_top": {"type": "neumann", "value": 0.0},
+            "z_bottom": {"type": "neumann", "value": 0.0},
+            "x_sides": {"type": "neumann", "value": 0.0},
+            "y_sides": {"type": "neumann", "value": 0.0},
+        }
+
+        structure = MockStructureManager(
+            epsilon_array=epsilon,
+            h=h,
+            boundary_conditions=boundary_conditions,
+        )
+
+        solver = PoissonSolver(
+            structure,
+            omega=1.5,
+            tolerance=1e-6,
+            max_iterations=1000,
+            method="redblack",
+            use_gpu=True,
+        )
+
+        result = solver.solve(verbose=False)
+
+        # With rho=0 and Neumann BC, potential should be constant
+        assert result.phi.std() < 1e-6, (
+            "GPU: Potential should be constant with zero charge and Neumann BC"
+        )
+        assert result.info["converged"], "GPU: Solver should converge"
+
+
+# =============================================================================
+# Julia CUDA.jl GPU Backend Tests
+# =============================================================================
+
+
+def _julia_cuda_available():
+    """Check if Julia CUDA.jl backend is available"""
+    if not JULIA_AVAILABLE:
+        return False
+    try:
+        from juliacall import Main as jl
+
+        # Check if CUDA.jl is available and functional
+        jl.seval("using CUDA")
+        return bool(jl.seval("CUDA.functional()"))
+    except Exception:
+        return False
+
+
+JULIA_CUDA_AVAILABLE = _julia_cuda_available()
+
+
+@pytest.mark.skipif(
+    not JULIA_CUDA_AVAILABLE, reason="Julia CUDA.jl backend not available"
+)
+class TestJuliaCUDABackend:
+    """Tests for Julia CUDA.jl GPU backend functionality"""
+
+    @pytest.fixture
+    def simple_structure(self):
+        """Create a simple structure for testing"""
+        nz, nx, ny = 11, 5, 5
+        h = 2e-9
+        epsilon = np.ones((nz, nx, ny)) * 3.9
+
+        boundary_conditions = {
+            "z_top": {"type": "dirichlet", "value": 1.0},
+            "z_bottom": {"type": "dirichlet", "value": 0.0},
+            "x_sides": {"type": "neumann", "value": 0.0},
+            "y_sides": {"type": "neumann", "value": 0.0},
+        }
+
+        return MockStructureManager(
+            epsilon_array=epsilon,
+            h=h,
+            boundary_conditions=boundary_conditions,
+        )
+
+    def test_julia_cuda_backend_initialization(self, simple_structure):
+        """Test that Julia CUDA backend initializes correctly"""
+        solver = PoissonSolver(
+            simple_structure,
+            method="redblack",
+            use_julia=True,
+            use_gpu=True,
+            max_iterations=10,
+        )
+
+        assert solver._use_julia, "Julia backend should be enabled"
+        assert solver._use_gpu, "GPU flag should be enabled"
+        assert solver._julia_main is not None, "Julia main should be initialized"
+
+    def test_julia_cuda_parallel_plate(self, simple_structure):
+        """Test Julia CUDA backend with parallel plate capacitor"""
+        nz = simple_structure.nz
+
+        solver = PoissonSolver(
+            simple_structure,
+            omega=1.5,
+            tolerance=1e-8,
+            max_iterations=5000,
+            method="redblack",
+            use_julia=True,
+            use_gpu=True,
+        )
+
+        phi_initial = np.zeros((nz, simple_structure.nx, simple_structure.ny))
+        phi_initial[0, :, :] = 1.0
+        phi_initial[-1, :, :] = 0.0
+
+        result = solver.solve(phi_initial=phi_initial, verbose=False)
+
+        # Check convergence
+        assert result.info["converged"], "Julia CUDA: Solver should converge"
+        assert not np.isnan(result.phi).any(), "Julia CUDA: No NaN values"
+
+        # Check boundary conditions
+        assert np.abs(result.phi[0, :, :].mean() - 1.0) < 1e-6, (
+            "Julia CUDA: Top boundary should be 1V"
+        )
+        assert np.abs(result.phi[-1, :, :].mean() - 0.0) < 1e-6, (
+            "Julia CUDA: Bottom boundary should be 0V"
+        )
+
+        # Check analytical solution
+        k_coords = np.arange(nz)
+        K = nz - 1
+        phi_analytical = 1.0 - k_coords / K
+
+        phi_numerical = result.phi[:, 2, 2]
+        error = np.abs(phi_numerical[1:-1] - phi_analytical[1:-1])
+        max_error = error.max()
+
+        assert max_error < 0.01, (
+            f"Julia CUDA: Max error {max_error:.6e} should be < 0.01"
+        )
+
+    def test_julia_cuda_vs_julia_cpu_consistency(self, simple_structure):
+        """Test that Julia CUDA and Julia CPU backends produce consistent results"""
+        nz, nx, ny = simple_structure.nz, simple_structure.nx, simple_structure.ny
+
+        phi_initial = np.zeros((nz, nx, ny))
+        phi_initial[0, :, :] = 1.0
+        phi_initial[-1, :, :] = 0.0
+
+        # Solve with Julia CPU
+        solver_cpu = PoissonSolver(
+            simple_structure,
+            omega=1.5,
+            tolerance=1e-8,
+            max_iterations=5000,
+            method="redblack",
+            use_julia=True,
+            use_gpu=False,
+        )
+        result_cpu = solver_cpu.solve(phi_initial=phi_initial.copy(), verbose=False)
+
+        # Solve with Julia CUDA
+        solver_cuda = PoissonSolver(
+            simple_structure,
+            omega=1.5,
+            tolerance=1e-8,
+            max_iterations=5000,
+            method="redblack",
+            use_julia=True,
+            use_gpu=True,
+        )
+        result_cuda = solver_cuda.solve(phi_initial=phi_initial.copy(), verbose=False)
+
+        # Compare results
+        max_diff = np.max(np.abs(result_cpu.phi - result_cuda.phi))
+
+        print("\nJulia CUDA vs Julia CPU backend comparison:")
+        print(f"  Julia CPU iterations: {result_cpu.info['iterations']}")
+        print(f"  Julia CUDA iterations: {result_cuda.info['iterations']}")
+        print(f"  Max difference: {max_diff:.2e}")
+
+        # Allow some tolerance due to floating point differences
+        assert max_diff < 1e-6, (
+            f"Julia CUDA and Julia CPU results should be consistent, "
+            f"but max diff is {max_diff:.2e}"
+        )
+
+    def test_julia_cuda_electrode_volume(self):
+        """Test Julia CUDA backend with 3D electrode volumes"""
+        nz, nx, ny = 11, 11, 11
+        h = 10e-9
+
+        epsilon = np.ones((nz, nx, ny)) * 11.7
+
+        electrode_mask = np.zeros((nz, nx, ny), dtype=bool)
+        electrode_mask[0:2, 4:7, 4:7] = True
+
+        electrode_voltages = np.zeros((nz, nx, ny))
+        electrode_voltages[0:2, 4:7, 4:7] = -0.5
+
+        boundary_conditions = {
+            "z_top": {"type": "neumann", "value": 0.0},
+            "z_bottom": {"type": "neumann", "value": 0.0},
+            "x_sides": {"type": "neumann", "value": 0.0},
+            "y_sides": {"type": "neumann", "value": 0.0},
+        }
+
+        structure = MockStructureManager(
+            epsilon_array=epsilon,
+            h=h,
+            boundary_conditions=boundary_conditions,
+            electrode_mask=electrode_mask,
+            electrode_voltages=electrode_voltages,
+        )
+
+        solver = PoissonSolver(
+            structure,
+            omega=1.8,
+            tolerance=1e-6,
+            max_iterations=10000,
+            method="redblack",
+            use_julia=True,
+            use_gpu=True,
+        )
+
+        phi_initial = np.zeros((nz, nx, ny))
+        phi_initial[electrode_mask] = -0.5
+
+        result = solver.solve(phi_initial=phi_initial, verbose=False)
+
+        # Check electrode voltage
+        electrode_phi = result.phi[electrode_mask]
+        assert np.allclose(electrode_phi, -0.5, atol=1e-6), (
+            "Julia CUDA: Electrode potential should be -0.5V"
+        )
+
+        assert result.info["converged"], "Julia CUDA: Solver should converge"
+
+    def test_julia_cuda_neumann_bc(self):
+        """Test Julia CUDA backend with all Neumann boundary conditions"""
+        nz, nx, ny = 10, 10, 10
+        h = 1e-9
+
+        epsilon = np.ones((nz, nx, ny)) * 11.7
+        boundary_conditions = {
+            "z_top": {"type": "neumann", "value": 0.0},
+            "z_bottom": {"type": "neumann", "value": 0.0},
+            "x_sides": {"type": "neumann", "value": 0.0},
+            "y_sides": {"type": "neumann", "value": 0.0},
+        }
+
+        structure = MockStructureManager(
+            epsilon_array=epsilon,
+            h=h,
+            boundary_conditions=boundary_conditions,
+        )
+
+        solver = PoissonSolver(
+            structure,
+            omega=1.5,
+            tolerance=1e-6,
+            max_iterations=1000,
+            method="redblack",
+            use_julia=True,
+            use_gpu=True,
+        )
+
+        result = solver.solve(verbose=False)
+
+        # With rho=0 and Neumann BC, potential should be constant
+        assert result.phi.std() < 1e-6, (
+            "Julia CUDA: Potential should be constant with zero charge and Neumann BC"
+        )
+        assert result.info["converged"], "Julia CUDA: Solver should converge"
+
+    def test_julia_cuda_periodic_bc(self):
+        """Test Julia CUDA backend with periodic boundary conditions"""
+        nz, nx, ny = 10, 10, 10
+        h = 1e-9
+
+        epsilon = np.ones((nz, nx, ny)) * 11.7
+        boundary_conditions = {
+            "z_top": {"type": "dirichlet", "value": 1.0},
+            "z_bottom": {"type": "dirichlet", "value": 0.0},
+            "x_sides": {"type": "periodic"},
+            "y_sides": {"type": "periodic"},
+        }
+
+        structure = MockStructureManager(
+            epsilon_array=epsilon,
+            h=h,
+            boundary_conditions=boundary_conditions,
+        )
+
+        solver = PoissonSolver(
+            structure,
+            omega=1.5,
+            tolerance=1e-6,
+            max_iterations=1000,
+            method="redblack",
+            use_julia=True,
+            use_gpu=True,
+        )
+
+        result = solver.solve(verbose=False)
+
+        # Check that periodic BC is applied (edges should match)
+        assert np.allclose(result.phi[:, 0, :], result.phi[:, -2, :], atol=1e-6), (
+            "Julia CUDA: x periodic BC should make edges equal"
+        )
+        assert np.allclose(result.phi[:, :, 0], result.phi[:, :, -2], atol=1e-6), (
+            "Julia CUDA: y periodic BC should make edges equal"
+        )
+
+        assert result.info["converged"], "Julia CUDA: Solver should converge"

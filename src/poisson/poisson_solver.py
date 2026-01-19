@@ -36,6 +36,9 @@ class PoissonSolver:
     num_threads : int, optional
         Number of threads for Julia parallel execution. Must be set before
         first PoissonSolver instantiation. If None, uses Julia default.
+    use_gpu : bool, optional
+        Use GPU backend (CuPy/CUDA) for faster computation, default=False.
+        Requires CuPy and NVIDIA GPU with CUDA support.
     """
 
     def __init__(
@@ -47,6 +50,7 @@ class PoissonSolver:
         method: str = "sor",
         use_julia: bool = False,
         num_threads: Optional[int] = None,
+        use_gpu: bool = False,
     ):
         self.structure = structure
 
@@ -77,7 +81,13 @@ class PoissonSolver:
         self.method = method.lower()
         self.num_threads = num_threads
         self._use_julia = use_julia
+        self._use_gpu = use_gpu
+        self._cp = None  # CuPy module reference
         self.validate_method()
+
+        # Initialize GPU backend if requested
+        if not self._use_julia and self._use_gpu:
+            self._initialize_gpu()
 
         self._julia_main = None
         if self._use_julia:
@@ -91,6 +101,53 @@ class PoissonSolver:
             raise ValueError(
                 f"Invalid solver method: {self.method}. Choose from {valid_methods}."
             )
+
+    def _initialize_gpu(self):
+        """Initialize GPU backend using CuPy"""
+        try:
+            import cupy as cp
+
+            # Check if CUDA is available
+            if cp.cuda.runtime.getDeviceCount() == 0:
+                import warnings
+
+                warnings.warn(
+                    "No CUDA devices found. Falling back to CPU implementation.",
+                    UserWarning,
+                )
+                self._use_gpu = False
+                return
+
+            self._cp = cp
+
+            # Report GPU info
+            device = cp.cuda.Device()
+            props = cp.cuda.runtime.getDeviceProperties(device.id)
+            device_name = (
+                props["name"].decode()
+                if isinstance(props["name"], bytes)
+                else props["name"]
+            )
+            print(f"GPU backend initialized: {device_name}")
+
+        except ImportError:
+            import warnings
+
+            warnings.warn(
+                "CuPy not available. Install with: uv add cupy-cuda12x. "
+                "Falling back to CPU implementation.",
+                UserWarning,
+            )
+            self._use_gpu = False
+        except Exception as e:
+            import warnings
+
+            warnings.warn(
+                f"Failed to initialize GPU backend: {e}. "
+                "Falling back to CPU implementation.",
+                UserWarning,
+            )
+            self._use_gpu = False
 
     def _initialize_julia(self):
         """Initialize Julia environment and load solver module"""
@@ -181,8 +238,10 @@ class PoissonSolver:
         result : PoissonResult
             PoissonResult object containing phi, coordinates, materials, and convergence info
         """
-        # Use Julia backend if available
-        if self._use_julia and self._julia_main is not None:
+        # Select backend: GPU > Julia > Python/Numba
+        if self._use_gpu and self._cp is not None:
+            return self._solve_gpu(rho, phi_initial, verbose)
+        elif self._use_julia and self._julia_main is not None:
             return self._solve_julia(rho, phi_initial, verbose)
         else:
             return self._solve_python(rho, phi_initial, verbose)
@@ -319,8 +378,10 @@ class PoissonSolver:
         electrode_voltages_jl = jl.Array(electrode_voltages)
 
         # Select Julia method type
-        if self.method == "redblack":
+        if self.method == "redblack" and not self._use_gpu:
             _method = jl.RedBlack()
+        elif self.method == "redblack" and self._use_gpu:
+            _method = jl.CUDARedBlack()
         elif self.method == "sor":
             _method = jl.SOR()
 
@@ -352,6 +413,129 @@ class PoissonSolver:
             "converged": bool(info_dict["converged"]),
             "iterations": int(info_dict["iterations"]),
             "final_phi_change": float(info_dict["final_phi_change"]),
+        }
+
+        return self._create_solver_result(phi_final, info)
+
+    def _solve_gpu(
+        self,
+        rho: Optional[np.ndarray] = None,
+        phi_initial: Optional[np.ndarray] = None,
+        verbose: bool = True,
+    ) -> PoissonResult:
+        """Solve the Poisson equation using GPU backend (CuPy/CUDA)
+
+        Parameters
+        ----------
+        rho : np.ndarray, optional
+            Charge density distribution (C/m^3), shape=(nz, nx, ny)
+            Treated as zero if None
+        phi_initial : np.ndarray, optional
+            Initial potential distribution (V)
+        verbose : bool, optional
+            Print convergence progress (default: True)
+
+        Returns
+        -------
+        result : PoissonResult
+            PoissonResult object containing phi, coordinates, materials, and convergence info
+        """
+        from .core.gpu import (
+            redblack_sor_iteration_gpu,
+            apply_boundary_conditions_gpu,
+        )
+
+        cp = self._cp
+
+        # Initialize charge density
+        if rho is None:
+            rho = np.zeros((self.nz, self.nx, self.ny))
+
+        # Initialize potential
+        if phi_initial is None:
+            phi_initial = np.zeros((self.nz, self.nx, self.ny))
+
+        # Prepare electrode data
+        if self.electrode_mask is None:
+            electrode_mask = np.zeros((self.nz, self.nx, self.ny), dtype=np.bool_)
+            electrode_voltages = np.zeros((self.nz, self.nx, self.ny))
+        else:
+            electrode_mask = self.electrode_mask
+            electrode_voltages = self.electrode_voltages
+
+        # Transfer arrays to GPU
+        phi_gpu = cp.asarray(phi_initial)
+        rho_gpu = cp.asarray(rho)
+        epsilon_gpu = cp.asarray(self.epsilon)
+        electrode_mask_gpu = cp.asarray(electrode_mask)
+        electrode_voltages_gpu = cp.asarray(electrode_voltages)
+
+        # Set electrode potential (fixed values)
+        phi_gpu[electrode_mask_gpu] = electrode_voltages_gpu[electrode_mask_gpu]
+
+        # Apply initial boundary conditions
+        apply_boundary_conditions_gpu(phi_gpu, self.boundary_conditions)
+
+        # Store previous phi for convergence check
+        phi_prev_gpu = phi_gpu.copy()
+
+        self.convergence_history = []
+
+        # SOR iteration
+        converged = False
+        final_iteration = 0
+        phi_diff = 0.0
+
+        for iteration in range(self.max_iterations):
+            # Red-Black SOR iteration on GPU
+            redblack_sor_iteration_gpu(
+                phi_gpu,
+                rho_gpu,
+                epsilon_gpu,
+                electrode_mask_gpu,
+                self.h,
+                self.omega,
+                self.epsilon_0,
+            )
+
+            # Reapply boundary conditions
+            apply_boundary_conditions_gpu(phi_gpu, self.boundary_conditions)
+
+            # Enforce electrode potential
+            phi_gpu[electrode_mask_gpu] = electrode_voltages_gpu[electrode_mask_gpu]
+
+            # Compute maximum change in phi (GPU reduction)
+            phi_diff = float(cp.max(cp.abs(phi_gpu - phi_prev_gpu)))
+            self.convergence_history.append(phi_diff)
+
+            if verbose:
+                if (iteration + 1) % 1000 == 0:
+                    print("=" * 40)
+                if (iteration + 1) % 100 == 0:
+                    print(f"Iteration {iteration + 1}: Max Δφ = {phi_diff:.6e}")
+
+            # Check convergence
+            if phi_diff < self.tolerance:
+                converged = True
+                final_iteration = iteration + 1
+                break
+
+            if np.isnan(phi_diff) or np.isinf(phi_diff):
+                raise ValueError("Phi change became NaN or Inf, diverging solution.")
+
+            # Update phi_prev for next iteration
+            cp.copyto(phi_prev_gpu, phi_gpu)
+
+        if not converged:
+            final_iteration = self.max_iterations
+
+        # Transfer result back to CPU
+        phi_final = cp.asnumpy(phi_gpu)
+
+        info = {
+            "converged": converged,
+            "iterations": final_iteration,
+            "final_phi_change": phi_diff,
         }
 
         return self._create_solver_result(phi_final, info)

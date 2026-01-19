@@ -4,8 +4,23 @@ abstract type AbstractMethod end
 struct RedBlack <: AbstractMethod end
 struct SOR <: AbstractMethod end
 
-include("redblack.jl")
+include("rbsor.jl")
 include("sor.jl")
+
+# GPU method abstract type (defined here so cuda_solver.jl can use it)
+abstract type GPUMethod <: AbstractMethod end
+
+# Conditionally include CUDA backend if CUDA.jl is available
+const CUDA_AVAILABLE = try
+    using CUDA
+    CUDA.functional()
+catch
+    false
+end
+
+if CUDA_AVAILABLE
+    include("cuda_solver.jl")
+end
 
 """
     prepare_bc_dict(bc_python)
