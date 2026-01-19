@@ -89,23 +89,23 @@ end
 Perform one Red-Black SOR iteration on GPU using CUDA.jl.
 
 # Arguments
-- `phi::CuArray{Float64,3}`: Potential array (modified in-place)
-- `rho::CuArray{Float64,3}`: Charge density array
-- `epsilon::CuArray{Float64,3}`: Permittivity array
+- `phi::CuArray{Float32,3}`: Potential array (modified in-place)
+- `rho::CuArray{Float32,3}`: Charge density array
+- `epsilon::CuArray{Float32,3}`: Permittivity array
 - `electrode_mask::CuArray{Bool,3}`: Electrode mask
-- `h::Float64`: Grid spacing
-- `omega::Float64`: SOR relaxation parameter
-- `epsilon_0::Float64`: Vacuum permittivity
+- `h::Float32`: Grid spacing
+- `omega::Float32`: SOR relaxation parameter
+- `epsilon_0::Float32`: Vacuum permittivity
 - `::CUDARedBlack`: Method dispatch tag
 """
 function sor_iteration!(
-    phi::CuArray{Float64,3},
-    rho::CuArray{Float64,3},
-    epsilon::CuArray{Float64,3},
+    phi::CuArray{Float32,3},
+    rho::CuArray{Float32,3},
+    epsilon::CuArray{Float32,3},
     electrode_mask::CuArray{Bool,3},
-    h::Float64,
-    omega::Float64,
-    epsilon_0::Float64,
+    h::Float32,
+    omega::Float32,
+    epsilon_0::Float32,
     ::CUDARedBlack
 )
     nz, nx, ny = size(phi)
@@ -146,9 +146,9 @@ Apply boundary conditions on GPU arrays.
 - `h::Float64`: Grid spacing
 """
 function apply_boundary_conditions_gpu!(
-    phi::CuArray{Float64,3},
+    phi::CuArray{Float32,3},
     bc_dict::Dict,
-    h::Float64
+    h::Float32
 )
     nz, nx, ny = size(phi)
 
@@ -258,11 +258,14 @@ function solve_poisson(
 )
     println("Using GPU backend with CUDA.jl for Poisson solver.")
     # Transfer arrays to GPU
-    phi_gpu = CuArray(phi)
-    rho_gpu = CuArray(rho)
-    epsilon_gpu = CuArray(epsilon)
+    phi_gpu = Float32.(CuArray(phi))
+    rho_gpu = Float32.(CuArray(rho))
+    epsilon_gpu = Float32.(CuArray(epsilon))
     electrode_mask_gpu = CuArray(electrode_mask)
-    electrode_voltages_gpu = CuArray(electrode_voltages)
+    electrode_voltages_gpu = Float32.(CuArray(electrode_voltages))
+    h = Float32(h)
+    omega = Float32(omega)
+    epsilon_0 = Float32(epsilon_0)
 
     # Prepare boundary conditions
     bc_julia = prepare_bc_dict(boundary_conditions)
