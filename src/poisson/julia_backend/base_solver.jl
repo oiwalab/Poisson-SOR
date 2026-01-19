@@ -19,7 +19,7 @@ catch
 end
 
 if CUDA_AVAILABLE
-    include("cuda_solver.jl")
+    include("rbsor_cuda.jl")
 end
 
 """
@@ -187,6 +187,7 @@ function solve_poisson(
     method::AbstractMethod,
     verbose::Bool
 )
+    println("Using CPU backend with Julia for Poisson solver.")
     # Prepare boundary conditions dict
     bc_julia = prepare_bc_dict(boundary_conditions)
 

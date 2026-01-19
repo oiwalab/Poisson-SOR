@@ -58,24 +58,26 @@ function _sor_kernel!(
     end
 
     # Permittivity coefficients (z-layer dependent)
-    eps_k = epsilon[k, 1, 1]
-    eps_zp = epsilon[k, 1, 1]      # Between k and k+1
-    eps_zm = epsilon[k-1, 1, 1]    # Between k-1 and k
+    @inbounds begin
+        eps_k = epsilon[k, 1, 1]
+        eps_zp = epsilon[k, 1, 1]      # Between k and k+1
+        eps_zm = epsilon[k-1, 1, 1]    # Between k-1 and k
 
-    # Finite difference coefficients
-    az = eps_zp / h2
-    bz = eps_zm / h2
-    axy = eps_k / h2
-    A = 4.0 * axy + az + bz
+        # Finite difference coefficients
+        az = eps_zp / h2
+        bz = eps_zm / h2
+        axy = eps_k / h2
+        A = 4.0 * axy + az + bz
 
-    # 6-point stencil
-    B = axy * (phi[k, i+1, j] + phi[k, i-1, j] +
-               phi[k, i, j+1] + phi[k, i, j-1]) +
-        az * phi[k+1, i, j] + bz * phi[k-1, i, j] +
-        rho[k, i, j] / epsilon_0
+        # 6-point stencil
+        B = axy * (phi[k, i+1, j] + phi[k, i-1, j] +
+                phi[k, i, j+1] + phi[k, i, j-1]) +
+            az * phi[k+1, i, j] + bz * phi[k-1, i, j] +
+            rho[k, i, j] / epsilon_0
 
-    # SOR update
-    phi[k, i, j] = (1.0 - omega) * phi[k, i, j] + omega * (B / A)
+        # SOR update
+        phi[k, i, j] = (1.0 - omega) * phi[k, i, j] + omega * (B / A)
+    end
 
     return nothing
 end
@@ -254,6 +256,7 @@ function solve_poisson(
     method::GPUMethod,
     verbose::Bool
 )
+    println("Using GPU backend with CUDA.jl for Poisson solver.")
     # Transfer arrays to GPU
     phi_gpu = CuArray(phi)
     rho_gpu = CuArray(rho)

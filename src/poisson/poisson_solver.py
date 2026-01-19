@@ -4,6 +4,7 @@ Solves Poisson equation -∇⋅(ε∇φ)=ρ for systems with non-uniform permitt
 """
 
 import os
+import warnings
 from pathlib import Path
 import numpy as np
 from typing import Dict, Optional, TYPE_CHECKING
@@ -101,6 +102,12 @@ class PoissonSolver:
             raise ValueError(
                 f"Invalid solver method: {self.method}. Choose from {valid_methods}."
             )
+        if self.method == "sor" and self._use_gpu:
+            warnings.warn(
+                "Standard SOR method does not support GPU backend. "
+                "Falling back to CPU implementation.",
+                UserWarning,
+            )
 
     def _initialize_gpu(self):
         """Initialize GPU backend using CuPy"""
@@ -109,8 +116,6 @@ class PoissonSolver:
 
             # Check if CUDA is available
             if cp.cuda.runtime.getDeviceCount() == 0:
-                import warnings
-
                 warnings.warn(
                     "No CUDA devices found. Falling back to CPU implementation.",
                     UserWarning,
@@ -131,8 +136,6 @@ class PoissonSolver:
             print(f"GPU backend initialized: {device_name}")
 
         except ImportError:
-            import warnings
-
             warnings.warn(
                 "CuPy not available. Install with: uv add cupy-cuda12x. "
                 "Falling back to CPU implementation.",
@@ -140,8 +143,6 @@ class PoissonSolver:
             )
             self._use_gpu = False
         except Exception as e:
-            import warnings
-
             warnings.warn(
                 f"Failed to initialize GPU backend: {e}. "
                 "Falling back to CPU implementation.",
@@ -161,8 +162,6 @@ class PoissonSolver:
                 os.environ["JULIA_NUM_THREADS"] = str(self.num_threads)
                 print(f"Setting Julia threads to {self.num_threads}")
             else:
-                import warnings
-
                 warnings.warn(
                     "Julia already initialized. num_threads setting ignored. "
                     "Set num_threads before creating the first PoissonSolver instance.",
@@ -239,7 +238,7 @@ class PoissonSolver:
             PoissonResult object containing phi, coordinates, materials, and convergence info
         """
         # Select backend: GPU > Julia > Python/Numba
-        if self._use_gpu and self._cp is not None:
+        if not self._use_julia and self._use_gpu and self._cp is not None:
             return self._solve_gpu(rho, phi_initial, verbose)
         elif self._use_julia and self._julia_main is not None:
             return self._solve_julia(rho, phi_initial, verbose)
@@ -464,11 +463,11 @@ class PoissonSolver:
             electrode_voltages = self.electrode_voltages
 
         # Transfer arrays to GPU
-        phi_gpu = cp.asarray(phi_initial)
-        rho_gpu = cp.asarray(rho)
-        epsilon_gpu = cp.asarray(self.epsilon)
+        phi_gpu = cp.asarray(phi_initial, dtype=cp.float32)
+        rho_gpu = cp.asarray(rho, dtype=cp.float32)
+        epsilon_gpu = cp.asarray(self.epsilon, dtype=cp.float32)
         electrode_mask_gpu = cp.asarray(electrode_mask)
-        electrode_voltages_gpu = cp.asarray(electrode_voltages)
+        electrode_voltages_gpu = cp.asarray(electrode_voltages, dtype=cp.float32)
 
         # Set electrode potential (fixed values)
         phi_gpu[electrode_mask_gpu] = electrode_voltages_gpu[electrode_mask_gpu]
