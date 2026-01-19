@@ -269,6 +269,60 @@ boundary_conditions:
     value: 0.0
 ```
 
+### GDS File Electrode Definition
+
+For complex electrode geometries, load patterns from GDSII files:
+
+```yaml
+electrodes:
+  # GDS-based electrodes
+  - source: "gds"
+    gds_file: "electrodes.gds"      # Path relative to YAML file
+    gds_unit: 1e-6                  # GDS units to meters (1 um = 1e-6 m)
+    origin: [0, 0]                  # Offset in simulation coordinates (m)
+    cell_name: null                 # null = top-level cell, or specify name
+    layer_mapping:
+      - layer: 1                    # GDS layer number
+        datatype: 0                 # GDS datatype (default: 0)
+        name: "gate_1"
+        voltage: 0.5
+        z_position: -15e-9          # Electrode bottom position
+      - layer: 2
+        name: "gate_2"
+        voltage: -0.3
+        z_position: -15e-9
+
+  # Rectangle and GDS electrodes can be mixed
+  - name: "screening_gate"
+    shape: "rectangle"
+    x_range: [0, 100e-9]
+    y_range: [0, 100e-9]
+    z_position: -20e-9
+    voltage: 0.0
+```
+
+**GDS Configuration Parameters:**
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `gds_file` | (required) | Path to GDS file (relative to YAML or absolute) |
+| `gds_unit` | `1e-6` | Conversion factor from GDS units to meters |
+| `origin` | `[0, 0]` | X, Y offset in simulation coordinates (meters) |
+| `cell_name` | `null` | Cell to use (`null` = auto-select top-level cell) |
+| `layer_mapping` | (required) | List of layer configurations |
+
+**Layer Mapping Parameters:**
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `layer` | (required) | GDS layer number |
+| `datatype` | `0` | GDS datatype |
+| `name` | auto | Electrode name |
+| `voltage` | `0.0` | Applied voltage (V) |
+| `z_position` | `0.0` | Electrode bottom position (negative value) |
+
+**Dependencies:** `gdspy` and `shapely` (included in project dependencies)
+
 ## Examples
 
 Run the main example:
@@ -296,6 +350,7 @@ uv run jupyter notebook examples/tutorial.ipynb
 ├── src/
 │   ├── materials.py                # Material database (Si, SiO2, etc.)
 │   ├── structure.py                # Structure and grid management
+│   ├── gds_loader.py               # GDS file loading for electrode masks
 │   ├── poisson/
 │   │   ├── __init__.py             # Package exports
 │   │   ├── poisson_solver.py      # SOR Poisson solver (JIT compiled)
@@ -345,6 +400,7 @@ uv run pytest --cov=src --cov-report=html
 Test results (as of latest commit):
 - `test_materials.py`: Material database validation
 - `test_structure.py`: Structure loading and grid generation
+- `test_gds_loader.py`: GDS file loading, coordinate conversion, rasterization (13 tests)
 - `test_solver.py`: Physics-based solver validation (parallel plate, point charge, band bending)
 - `test_interpolator.py`: 17 tests covering initialization, interpolation, accuracy, save/load (2.5s runtime)
 - `test_time_dependent.py`: 15 tests covering voltage functions, time-dependent computation, accuracy (11s runtime)
@@ -560,6 +616,38 @@ energies, psi = solver.solve(n_states=3)
 print(f"Ground state: {energies[0]:.4f} eV")
 print(f"Level spacing: {(energies[1] - energies[0]) * 1000:.2f} meV")
 ```
+
+#### `GDSLoader`
+Loads electrode patterns from GDSII files and rasterizes them to the computational grid.
+
+```python
+from gds_loader import GDSLoader
+
+# Load GDS file
+loader = GDSLoader(
+    gds_path="electrodes.gds",
+    gds_unit=1e-6,              # 1 um = 1e-6 m
+    origin=(0, 0),              # Offset in meters
+    cell_name=None              # None = top-level cell
+)
+
+# Get available layers
+layers = loader.get_available_layers()  # [(1, 0), (2, 0), ...]
+
+# Get polygons (in meters)
+polygons = loader.get_polygons(layer=1, datatype=0)
+
+# Rasterize to grid
+x_coords = np.arange(0, 100e-9, 1e-9)
+y_coords = np.arange(0, 100e-9, 1e-9)
+mask = loader.rasterize_layer(layer=1, datatype=0, x_coords=x_coords, y_coords=y_coords)
+# Returns: (nx, ny) boolean array
+
+# Get bounding box
+bbox = loader.get_bounding_box(layer=1)  # (x_min, y_min, x_max, y_max) in meters
+```
+
+**Note:** GDS electrodes are typically used via YAML configuration rather than direct API calls.
 
 ### Material Database
 

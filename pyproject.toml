@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "cupy>=13.6.0",
+    "gdspy>=1.6.13",
     "ipykernel>=7.0.1",
     "matplotlib>=3.10.7",
     "nbformat>=5.10.4",
@@ -15,6 +16,7 @@ dependencies = [
     "pytest>=8.4.2",
     "pyyaml>=6.0.3",
     "scipy>=1.11.0",
+    "shapely>=2.1.2",
 ]
 
 [dependency-groups]
