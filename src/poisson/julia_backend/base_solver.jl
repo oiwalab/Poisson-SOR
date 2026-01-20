@@ -6,6 +6,7 @@ struct SOR <: AbstractMethod end
 
 include("rbsor.jl")
 include("sor.jl")
+include("multigrid.jl")
 
 # GPU method abstract type (defined here so cuda_solver.jl can use it)
 abstract type GPUMethod <: AbstractMethod end

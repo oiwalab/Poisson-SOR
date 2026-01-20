@@ -68,10 +68,6 @@ class PoissonSolver:
         self.tolerance = tolerance
         self.max_iterations = max_iterations
 
-        # Validate method parameter
-        if method not in ["sor", "redblack"]:
-            raise ValueError(f"Invalid method '{method}'. Must be 'sor' or 'redblack'")
-
         # Vacuum permittivity (F/m)
         self.epsilon_0 = 8.854187817e-12
 
@@ -96,13 +92,13 @@ class PoissonSolver:
 
     def validate_method(self):
         """Validate solver method"""
-        valid_methods = ["sor", "redblack"]
+        valid_methods = ["sor", "redblack", "multigrid"]
 
         if self.method.lower() not in valid_methods:
             raise ValueError(
                 f"Invalid solver method: {self.method}. Choose from {valid_methods}."
             )
-        if self.method == "sor" and self._use_gpu:
+        if self.method in {"sor", "multigrid"} and self._use_gpu:
             warnings.warn(
                 "Standard SOR method does not support GPU backend. "
                 "Falling back to CPU implementation.",
@@ -381,6 +377,8 @@ class PoissonSolver:
             _method = jl.RedBlack()
         elif self.method == "redblack" and self._use_gpu:
             _method = jl.CUDARedBlack()
+        elif self.method == "multigrid":
+            _method = jl.MultiGrid()
         elif self.method == "sor":
             _method = jl.SOR()
 

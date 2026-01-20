@@ -137,22 +137,31 @@ end
 function restrict(fine::Array{Float64,3})
     nz_f, nx_f, ny_f = size(fine)
 
-    nz_c = div(nz_f, 2) + 1
-    nx_c = div(nx_f, 2) + 1
-    ny_c = div(ny_f, 2) + 1
+    # Correct coarse grid size calculation
+    nz_c = cld(nz_f, 2)
+    nx_c = cld(nx_f, 2)
+    ny_c = cld(ny_f, 2)
 
     coarse = zeros(Float64, nz_c, nx_c, ny_c)
 
-
+    # Interior points with full weighting
     @threads for k_c in 2:(nz_c-1)
         k_f = 2 * k_c - 1
+        if k_f < 2 || k_f > nz_f - 1
+            continue
+        end
         for i_c in 2:(nx_c-1)
             i_f = 2 * i_c - 1
+            if i_f < 2 || i_f > nx_f - 1
+                continue
+            end
             for j_c in 2:(ny_c-1)
                 j_f = 2 * j_c - 1
-
+                if j_f < 2 || j_f > ny_f - 1
+                    continue
+                end
+                # Full weighting stencil
                 for dk in -1:1, di in -1:1, dj in -1:1
-                    # Center: 1/8, Faces: 1/16, Edges: 1/32, Corners: 1/64
                     pow = 3 + abs(dk) + abs(di) + abs(dj)
                     weight = 1 / (2 ^ pow)
                     coarse[k_c, i_c, j_c] += weight * fine[k_f + dk, i_f + di, j_f + dj]
@@ -161,55 +170,94 @@ function restrict(fine::Array{Float64,3})
         end
     end
 
-    # Ghost layers
-    # Bottom/top in Z
+    # Boundary faces with explicit loops
+    for i_c in 1:nx_c, j_c in 1:ny_c
+        i_f = clamp(2 * i_c - 1, 1, nx_f)
+        j_f = clamp(2 * j_c - 1, 1, ny_f)
+        coarse[1, i_c, j_c] = fine[1, i_f, j_f]
+        coarse[nz_c, i_c, j_c] = fine[nz_f, i_f, j_f]
+    end
+    for k_c in 1:nz_c, j_c in 1:ny_c
+        k_f = clamp(2 * k_c - 1, 1, nz_f)
+        j_f = clamp(2 * j_c - 1, 1, ny_f)
+        coarse[k_c, 1, j_c] = fine[k_f, 1, j_f]
+        coarse[k_c, nx_c, j_c] = fine[k_f, nx_f, j_f]
+    end
+    for k_c in 1:nz_c, i_c in 1:nx_c
+        k_f = clamp(2 * k_c - 1, 1, nz_f)
+        i_f = clamp(2 * i_c - 1, 1, nx_f)
+        coarse[k_c, i_c, 1] = fine[k_f, i_f, 1]
+        coarse[k_c, i_c, ny_c] = fine[k_f, i_f, ny_f]
+    end
 
-    coarse[1, :, :] .= fine[1, 1:2:end, 1:2:end]
-    coarse[end, :, :] .= fine[end, 1:2:end, 1:2:end]
-
-    # Left/right in x
-    coarse[:, 1, :] .= fine[1:2:end, 1, 1:2:end]
-    coarse[:, end, :] .= fine[1:2:end, end, 1:2:end]
-
-    # Front/back in y
-    coarse[:, :, 1] .= fine[1:2:end, 1:2:end, 1]
-    coarse[:, :, end] .= fine[1:2:end, 1:2:end, end]
     return coarse
 end
 
-function prolongate(coarse::Array{Float64,3}, fine_ref::Array{Float64,3})
+function prolongate(coarse::Array{Float64,3}, fine_size::NTuple{3,Int})
     nz_c, nx_c, ny_c = size(coarse)
-    nz_f, nx_f, ny_f = size(fine_ref)
+    nz_f, nx_f, ny_f = fine_size
 
     fine = zeros(Float64, nz_f, nx_f, ny_f)
 
     @threads for k_f in 2:(nz_f-1)
-        for i_f in 2:(nx_f-1), j_f in 2:(ny_f-1)
-            k_c, dk = divrem(k_f + 1, 2)
-            i_c, di = divrem(i_f + 1, 2)
-            j_c, dj = divrem(j_f + 1, 2)
+        # Linear mapping: fine index -> coarse coordinate
+        t_k = (k_f - 1) * (nz_c - 1) / (nz_f - 1)
+        k_c_lo = floor(Int, t_k) + 1
+        k_c_hi = min(k_c_lo + 1, nz_c)
+        wk = t_k - (k_c_lo - 1)
 
-            wk0 = 1.0 - 0.5 * dk
-            wk1 = 0.5 * dk
-            wi0 = 1.0 - 0.5 * di
-            wi1 = 0.5 * di
-            wj0 = 1.0 - 0.5 * dj
-            wj1 = 0.5 * dj
+        for i_f in 2:(nx_f-1)
+            t_i = (i_f - 1) * (nx_c - 1) / (nx_f - 1)
+            i_c_lo = floor(Int, t_i) + 1
+            i_c_hi = min(i_c_lo + 1, nx_c)
+            wi = t_i - (i_c_lo - 1)
 
-            fine[k_f, i_f, j_f] = (
-                wk0 * wi0 * wj0 * coarse[k_c, i_c, j_c] +
-                wk0 * wi0 * wj1 * coarse[k_c, i_c, j_c + 1] +
-                wk0 * wi1 * wj0 * coarse[k_c, i_c + 1, j_c] +
-                wk0 * wi1 * wj1 * coarse[k_c, i_c + 1, j_c + 1] +
-                wk1 * wi0 * wj0 * coarse[k_c + 1, i_c, j_c] +
-                wk1 * wi0 * wj1 * coarse[k_c + 1, i_c, j_c + 1] +
-                wk1 * wi1 * wj0 * coarse[k_c + 1, i_c + 1, j_c] +
-                wk1 * wi1 * wj1 * coarse[k_c + 1, i_c + 1, j_c + 1]
-            )
+            for j_f in 2:(ny_f-1)
+                t_j = (j_f - 1) * (ny_c - 1) / (ny_f - 1)
+                j_c_lo = floor(Int, t_j) + 1
+                j_c_hi = min(j_c_lo + 1, ny_c)
+                wj = t_j - (j_c_lo - 1)
+
+                # Trilinear interpolation
+                fine[k_f, i_f, j_f] = (
+                    (1-wk) * (1-wi) * (1-wj) * coarse[k_c_lo, i_c_lo, j_c_lo] +
+                    (1-wk) * (1-wi) * wj     * coarse[k_c_lo, i_c_lo, j_c_hi] +
+                    (1-wk) * wi     * (1-wj) * coarse[k_c_lo, i_c_hi, j_c_lo] +
+                    (1-wk) * wi     * wj     * coarse[k_c_lo, i_c_hi, j_c_hi] +
+                    wk     * (1-wi) * (1-wj) * coarse[k_c_hi, i_c_lo, j_c_lo] +
+                    wk     * (1-wi) * wj     * coarse[k_c_hi, i_c_lo, j_c_hi] +
+                    wk     * wi     * (1-wj) * coarse[k_c_hi, i_c_hi, j_c_lo] +
+                    wk     * wi     * wj     * coarse[k_c_hi, i_c_hi, j_c_hi]
+                )
+            end
         end
     end
-    # Ghost layers are remained zero
+    # Ghost layers remain zero
     return fine
+end
+
+function restrict_epsilon(epsilon::Array{Float64,3}, coarse_size::NTuple{3,Int})
+    nz_c, _, _ = coarse_size
+    nz_f = size(epsilon, 1)
+    eps_c = zeros(Float64, nz_c, 1, 1)
+    for k_c in 1:nz_c
+        k_f = clamp(2 * k_c - 1, 1, nz_f)
+        eps_c[k_c, 1, 1] = epsilon[k_f, 1, 1]
+    end
+    return eps_c
+end
+
+function restrict_mask(mask, coarse_size::NTuple{3,Int})
+    nz_c, nx_c, ny_c = coarse_size
+    nz_f, nx_f, ny_f = size(mask)
+    mask_c = zeros(Bool, nz_c, nx_c, ny_c)
+    for k_c in 1:nz_c, i_c in 1:nx_c, j_c in 1:ny_c
+        k_f = clamp(2 * k_c - 1, 1, nz_f)
+        i_f = clamp(2 * i_c - 1, 1, nx_f)
+        j_f = clamp(2 * j_c - 1, 1, ny_f)
+        mask_c[k_c, i_c, j_c] = mask[k_f, i_f, j_f]
+    end
+    return mask_c
 end
 
 function v_cycle!(
@@ -221,43 +269,32 @@ function v_cycle!(
     omega::Float64,
 )
     for _ in 1:NUM_PRE_SMOOTH
-        smoothing!(
-            phi, b, epsilon, electrode_mask, h, omega
-        )
+        smoothing!(phi, b, epsilon, electrode_mask, h, omega)
     end
 
-    r = compute_residual(
-        phi, b, epsilon, electrode_mask, h
-    )
-
+    r = compute_residual(phi, b, epsilon, electrode_mask, h)
     rhs = restrict(r)
 
-    nz_c, nx_c, ny_c = size(rhs)
+    coarse_size = size(rhs)
+    nz_c, nx_c, ny_c = coarse_size
     err = zeros(Float64, nz_c, nx_c, ny_c)
+
+    # Use helper functions for coarsening
+    epsilon_c = restrict_epsilon(epsilon, coarse_size)
+    mask_c = restrict_mask(electrode_mask, coarse_size)
 
     if min(nz_c, nx_c, ny_c) <= MINIMUM_GRID_SIZE
         # Solve directly on coarsest grid
-        smoothing!(
-            err, rhs, epsilon[1:2:end, 1:2:end, 1:2:end],
-            electrode_mask[1:2:end, 1:2:end, 1:2:end],
-            2*h, omega
-        )
+        smoothing!(err, rhs, epsilon_c, mask_c, 2*h, omega)
     else
         # Recursive call
-        v_cycle!(
-            err, rhs,
-            epsilon[1:2:end, 1:2:end, 1:2:end],
-            electrode_mask[1:2:end, 1:2:end, 1:2:end],
-            2*h, omega,
-        )
+        v_cycle!(err, rhs, epsilon_c, mask_c, 2*h, omega)
     end
 
-    phi .+= prolongate(err, phi)
+    phi .+= prolongate(err, size(phi))
 
     for _ in 1:NUM_POST_SMOOTH
-        smoothing!(
-            phi, b, epsilon, electrode_mask, h, omega
-        )
+        smoothing!(phi, b, epsilon, electrode_mask, h, omega)
     end
 end
 
