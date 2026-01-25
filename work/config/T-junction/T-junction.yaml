@@ -1,0 +1,107 @@
+domain:
+  size: [560e-9, 630e-9, 121e-9]  # [x, y, z] in meters (560nm x 630nm x 141nm)
+  grid_spacing: 1e-9  # h in meters (1nm, isotropic grid)
+
+# Material layer structure
+layers:
+  - name: Insulator_layer
+    material: SiO2
+    thickness: 20e-9
+  - name: Cap_layer
+    material: Si
+    thickness: 2e-9
+  - name: Buffer_layer
+    material: SiGe0.3
+    thickness: 40e-9
+  - name: Quantum_well_layer
+    material: Strained_Si
+    thickness: 9e-9
+  - name: Substrate_layer
+    material: SiGe0.3
+    thickness: 50e-9
+
+# GDS file settings for shape="gds" electrodes
+gds_source:
+  gds_file: "T-junction.gds"
+  gds_unit: 1e-6
+  origin: [0, 0]
+  cell_name: null
+
+electrodes:
+  - name: "Screening_Gate"
+    shape: "gds"
+    layer: 0
+    datatype: 0
+    voltage: 0.01
+    z_position: -12e-9
+
+  - name: "Gate_1"
+    shape: "gds"
+    layer: 1
+    datatype: 0
+    voltage: 0.02
+    z_position: -12e-9
+
+  - name: "Gate_2"
+    shape: "gds"
+    layer: 2
+    datatype: 0
+    voltage: 0.03
+    z_position: -12e-9
+
+  - name: "Gate_3"
+    shape: "gds"
+    layer: 3
+    datatype: 0
+    voltage: 0.04
+    z_position: -12e-9
+
+  - name: "Gate_4"
+    shape: "gds"
+    layer: 4
+    datatype: 0
+    voltage: 0.05
+    z_position: -12e-9
+
+  - name: "Gate_5"
+    shape: "gds"
+    layer: 5
+    datatype: 0
+    voltage: 0.06
+    z_position: -12e-9
+
+  - name: "Gate_6"
+    shape: "gds"
+    layer: 6
+    datatype: 0
+    voltage: 0.07
+    z_position: -12e-9
+
+  - name: "Gate_7"
+    shape: "gds"
+    layer: 7
+    datatype: 0
+    voltage: 0.08
+    z_position: -12e-9
+
+  - name: "Gate_8"
+    shape: "gds"
+    layer: 8
+    datatype: 0
+    voltage: 0.09
+    z_position: -12e-9
+
+# Boundary conditions
+boundary_conditions:
+  z_top:
+    type: "neumann"
+    value: 0.0
+  z_bottom:
+    type: "dirichlet"
+    value: 0.0
+  x_sides:
+    type: "periodic"
+    value: 0.0
+  y_sides:
+    type: "dirichlet"
+    value: 0.0

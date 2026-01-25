@@ -583,7 +583,7 @@ def test_method_parameter_validation():
     assert solver_redblack.method == "redblack"
 
     # Invalid method should raise ValueError
-    with pytest.raises(ValueError, match="Invalid method"):
+    with pytest.raises(ValueError, match="Invalid solver method"):
         PoissonSolver(structure, method="invalid")
 
 

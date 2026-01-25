@@ -23,6 +23,7 @@ class StructureManager:
         self.config: Dict = {}
         self.layers: List[Dict] = []
         self.electrodes: List[Dict] = []
+        self.gds_source: Dict = {}  # GDS file settings for shape="gds" electrodes
         self.boundary_conditions: Dict = {}
 
         # Computational grid
@@ -75,6 +76,7 @@ class StructureManager:
         # Extract settings and convert string numbers to float
         self.layers = self._convert_to_numeric(self.config.get("layers", []))
         self.electrodes = self._convert_to_numeric(self.config.get("electrodes", []))
+        self.gds_source = self._convert_to_numeric(self.config.get("gds_source", {}))
         self.boundary_conditions = self._convert_to_numeric(
             self.config.get("boundary_conditions", {})
         )
@@ -415,7 +417,7 @@ class StructureManager:
         """Generate electrode mask
 
         3D boolean array with True at electrode positions.
-        Supports both rectangle shapes and GDS file sources.
+        Supports both rectangle shapes and GDS layer shapes.
 
         Returns
         -------
@@ -428,21 +430,14 @@ class StructureManager:
         self.electrode_mask[:, :, :] = False
 
         for electrode in self.electrodes:
-            source = electrode.get("source", "yaml")
+            shape = electrode.get("shape", "rectangle")
 
-            if source == "gds":
-                self._add_gds_electrodes(electrode)
+            if shape == "rectangle":
+                self._add_rectangle_electrode(electrode)
+            elif shape == "gds":
+                self._add_gds_electrode(electrode)
             else:
-                shape = electrode.get("shape", "rectangle")
-
-                if shape == "rectangle":
-                    self._add_rectangle_electrode(electrode)
-                elif shape == "from_file":
-                    raise NotImplementedError(
-                        "shape='from_file' is deprecated. Use source='gds' instead."
-                    )
-                else:
-                    raise ValueError(f"Unknown electrode shape: {shape}")
+                raise ValueError(f"Unknown electrode shape: {shape}")
 
         return self.electrode_mask
 
@@ -486,71 +481,67 @@ class StructureManager:
             k_top : k_bottom + 1, i_min : i_max + 1, j_min : j_max + 1
         ] = True
 
-    def _add_gds_electrodes(self, gds_config: Dict) -> None:
-        """Add electrodes from GDS file
+    def _add_gds_electrode(self, electrode: Dict) -> None:
+        """Add single electrode from GDS file
 
         Parameters
         ----------
-        gds_config : Dict
-            GDS electrode configuration containing:
-            - gds_file: path to GDS file (relative to YAML or absolute)
-            - gds_unit: conversion factor (default: 1e-6 for um)
-            - origin: [x, y] offset in meters
-            - cell_name: optional cell name (default: top-level cell)
-            - layer_mapping: list of layer configurations
+        electrode : Dict
+            Electrode definition with shape="gds", containing:
+            - layer: GDS layer number
+            - datatype: GDS datatype (default: 0)
+            - z_position: electrode z position
+            GDS file info is taken from self.gds_source
         """
         from gds_loader import GDSLoader
 
-        gds_file = gds_config.get("gds_file")
+        if not self.gds_source:
+            raise ValueError("gds_source must be defined for shape='gds' electrodes")
+
+        gds_file = self.gds_source.get("gds_file")
         if not gds_file:
-            raise ValueError("gds_file must be specified for GDS electrodes")
+            raise ValueError("gds_file must be specified in gds_source")
 
         # Resolve path relative to YAML config file
         gds_path = Path(gds_file)
         if not gds_path.is_absolute() and self._config_dir is not None:
-            gds_path = self._config_dir / gds_path
-
-        gds_unit = gds_config.get("gds_unit", 1e-6)
-        origin = tuple(gds_config.get("origin", [0.0, 0.0]))
-        cell_name = gds_config.get("cell_name")
+            gds_path = self._config_dir / gds_file
 
         loader = GDSLoader(
             gds_path=gds_path,
-            gds_unit=gds_unit,
-            origin=origin,
-            cell_name=cell_name,
+            gds_unit=self.gds_source.get("gds_unit", 1e-6),
+            origin=tuple(self.gds_source.get("origin", [0.0, 0.0])),
+            cell_name=self.gds_source.get("cell_name"),
         )
 
         # Get grid coordinates
         x_coords = np.arange(self.nx) * self.h
         y_coords = np.arange(self.ny) * self.h
 
-        # Process each layer mapping
-        for layer_config in gds_config.get("layer_mapping", []):
-            layer = layer_config.get("layer")
-            if layer is None:
-                raise ValueError("layer must be specified in layer_mapping")
+        layer = electrode.get("layer")
+        if layer is None:
+            raise ValueError("layer must be specified for shape='gds' electrodes")
 
-            datatype = layer_config.get("datatype", 0)
-            z_position = layer_config.get("z_position", 0.0)
+        datatype = electrode.get("datatype", 0)
+        z_position = electrode.get("z_position", 0.0)
 
-            # Rasterize this layer to 2D mask
-            xy_mask = loader.rasterize_layer(layer, datatype, x_coords, y_coords)
+        # Rasterize this layer to 2D mask
+        xy_mask = loader.rasterize_layer(layer, datatype, x_coords, y_coords)
 
-            # Convert to 3D mask (extend in z direction from surface to z_position)
-            k_top = 0
-            k_bottom = int(-z_position / self.h)
-            k_bottom = max(0, min(k_bottom, self.nz - 1))
+        # Convert to 3D mask (extend in z direction from surface to z_position)
+        k_top = 0
+        k_bottom = int(-z_position / self.h)
+        k_bottom = max(0, min(k_bottom, self.nz - 1))
 
-            # Set electrode mask for this layer
-            for k in range(k_top, k_bottom + 1):
-                self.electrode_mask[k, :, :] |= xy_mask
+        # Set electrode mask for this layer
+        for k in range(k_top, k_bottom + 1):
+            self.electrode_mask[k, :, :] |= xy_mask
 
     def get_electrode_voltages(self) -> np.ndarray:
         """Get electrode voltage distribution
 
         Set electrode voltage at each grid point.
-        Supports both rectangle shapes and GDS file sources.
+        Supports both rectangle shapes and GDS layer shapes.
 
         Returns
         -------
@@ -563,100 +554,82 @@ class StructureManager:
         self.electrode_voltages[:, :, :] = 0.0
 
         for electrode in self.electrodes:
-            source = electrode.get("source", "yaml")
+            shape = electrode.get("shape", "rectangle")
+            voltage = electrode.get("voltage", 0.0)
 
-            if source == "gds":
-                self._set_gds_electrode_voltages(electrode)
-            else:
-                voltage = electrode.get("voltage", 0.0)
-                shape = electrode.get("shape", "rectangle")
-
-                if shape == "rectangle":
-                    x_range = electrode.get("x_range", [0, 0])
-                    y_range = electrode.get("y_range", [0, 0])
-                    z_position = electrode.get(
-                        "z_position", 0
-                    )  # Electrode bottom (negative value)
-
-                    # Convert to indices
-                    i_min = int(x_range[0] / self.h)
-                    i_max = int(x_range[1] / self.h)
-                    j_min = int(y_range[0] / self.h)
-                    j_max = int(y_range[1] / self.h)
-
-                    # Electrode extends from surface (k=0, z=0) to z_position (negative value)
-                    k_top = 0  # Surface (z=0)
-                    k_bottom = int(-z_position / self.h)  # Electrode bottom
-
-                    # Range check
-                    i_min = max(0, min(i_min, self.nx - 1))
-                    i_max = max(0, min(i_max, self.nx - 1))
-                    j_min = max(0, min(j_min, self.ny - 1))
-                    j_max = max(0, min(j_max, self.ny - 1))
-                    k_top = max(0, min(k_top, self.nz - 1))
-                    k_bottom = max(0, min(k_bottom, self.nz - 1))
-
-                    # Set voltage (array shape: (nz, nx, ny))
-                    self.electrode_voltages[
-                        k_top : k_bottom + 1, i_min : i_max + 1, j_min : j_max + 1
-                    ] = voltage
+            if shape == "rectangle":
+                self._set_rectangle_electrode_voltage(electrode, voltage)
+            elif shape == "gds":
+                self._set_gds_electrode_voltage(electrode, voltage)
 
         return self.electrode_voltages
 
-    def _set_gds_electrode_voltages(self, gds_config: Dict) -> None:
-        """Set voltages for GDS-based electrodes
+    def _set_rectangle_electrode_voltage(
+        self, electrode: Dict, voltage: float
+    ) -> None:
+        """Set voltage for rectangular electrode"""
+        x_range = electrode.get("x_range", [0, 0])
+        y_range = electrode.get("y_range", [0, 0])
+        z_position = electrode.get("z_position", 0)
 
-        Parameters
-        ----------
-        gds_config : Dict
-            GDS electrode configuration (same as _add_gds_electrodes)
-        """
+        # Convert to indices
+        i_min = int(x_range[0] / self.h)
+        i_max = int(x_range[1] / self.h)
+        j_min = int(y_range[0] / self.h)
+        j_max = int(y_range[1] / self.h)
+
+        k_top = 0
+        k_bottom = int(-z_position / self.h)
+
+        # Range check
+        i_min = max(0, min(i_min, self.nx - 1))
+        i_max = max(0, min(i_max, self.nx - 1))
+        j_min = max(0, min(j_min, self.ny - 1))
+        j_max = max(0, min(j_max, self.ny - 1))
+        k_top = max(0, min(k_top, self.nz - 1))
+        k_bottom = max(0, min(k_bottom, self.nz - 1))
+
+        self.electrode_voltages[
+            k_top : k_bottom + 1, i_min : i_max + 1, j_min : j_max + 1
+        ] = voltage
+
+    def _set_gds_electrode_voltage(self, electrode: Dict, voltage: float) -> None:
+        """Set voltage for single GDS electrode"""
         from gds_loader import GDSLoader
 
-        gds_file = gds_config.get("gds_file")
+        if not self.gds_source:
+            return
+
+        gds_file = self.gds_source.get("gds_file")
         if not gds_file:
             return
 
-        # Resolve path relative to YAML config file
         gds_path = Path(gds_file)
         if not gds_path.is_absolute() and self._config_dir is not None:
-            gds_path = self._config_dir / gds_path
-
-        gds_unit = gds_config.get("gds_unit", 1e-6)
-        origin = tuple(gds_config.get("origin", [0.0, 0.0]))
-        cell_name = gds_config.get("cell_name")
+            gds_path = self._config_dir / gds_file
 
         loader = GDSLoader(
             gds_path=gds_path,
-            gds_unit=gds_unit,
-            origin=origin,
-            cell_name=cell_name,
+            gds_unit=self.gds_source.get("gds_unit", 1e-6),
+            origin=tuple(self.gds_source.get("origin", [0.0, 0.0])),
+            cell_name=self.gds_source.get("cell_name"),
         )
 
-        # Get grid coordinates
         x_coords = np.arange(self.nx) * self.h
         y_coords = np.arange(self.ny) * self.h
 
-        # Process each layer mapping
-        for layer_config in gds_config.get("layer_mapping", []):
-            layer = layer_config.get("layer")
-            if layer is None:
-                continue
+        layer = electrode.get("layer")
+        datatype = electrode.get("datatype", 0)
+        z_position = electrode.get("z_position", 0.0)
 
-            datatype = layer_config.get("datatype", 0)
-            voltage = layer_config.get("voltage", 0.0)
-            z_position = layer_config.get("z_position", 0.0)
+        xy_mask = loader.rasterize_layer(layer, datatype, x_coords, y_coords)
 
-            # Rasterize this layer to 2D mask
-            xy_mask = loader.rasterize_layer(layer, datatype, x_coords, y_coords)
+        k_top = 0
+        k_bottom = int(-z_position / self.h)
+        k_bottom = max(0, min(k_bottom, self.nz - 1))
 
-            # Set voltages in 3D
-            k_top = 0
-            k_bottom = int(-z_position / self.h)
-            k_bottom = max(0, min(k_bottom, self.nz - 1))
-
-            for k in range(k_top, k_bottom + 1):
-                self.electrode_voltages[k, xy_mask] = voltage
+        for k in range(k_top, k_bottom + 1):
+            self.electrode_voltages[k, xy_mask] = voltage
 
     def check_electrode_overlap(self) -> None:
         """Check for electrode overlap

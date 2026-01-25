@@ -239,21 +239,19 @@ class TestStructureManagerGDSIntegration:
                 {"material": "SiO2", "z_range": [0, -25e-9]},
                 {"material": "Si", "z_range": [-25e-9, -50e-9]},
             ],
+            "gds_source": {
+                "gds_file": str(gds_file),
+                "gds_unit": 1e-6,
+                "origin": [0, 0],
+            },
             "electrodes": [
                 {
-                    "source": "gds",
-                    "gds_file": str(gds_file),
-                    "gds_unit": 1e-6,
-                    "origin": [0, 0],
-                    "layer_mapping": [
-                        {
-                            "layer": 1,
-                            "datatype": 0,
-                            "name": "gate_1",
-                            "voltage": 0.5,
-                            "z_position": -15e-9,
-                        }
-                    ],
+                    "name": "gate_1",
+                    "shape": "gds",
+                    "layer": 1,
+                    "datatype": 0,
+                    "voltage": 0.5,
+                    "z_position": -15e-9,
                 }
             ],
             "boundary_conditions": {
@@ -299,18 +297,17 @@ class TestStructureManagerGDSIntegration:
                 {"material": "SiO2", "z_range": [0, -25e-9]},
                 {"material": "Si", "z_range": [-25e-9, -50e-9]},
             ],
+            "gds_source": {
+                "gds_file": str(gds_file),
+                "gds_unit": 1e-6,
+            },
             "electrodes": [
                 {
-                    "source": "gds",
-                    "gds_file": str(gds_file),
-                    "gds_unit": 1e-6,
-                    "layer_mapping": [
-                        {
-                            "layer": 1,
-                            "voltage": 0.5,
-                            "z_position": -15e-9,
-                        }
-                    ],
+                    "name": "gds_gate",
+                    "shape": "gds",
+                    "layer": 1,
+                    "voltage": 0.5,
+                    "z_position": -15e-9,
                 },
                 {
                     "name": "rect_gate",

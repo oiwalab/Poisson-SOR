@@ -443,6 +443,7 @@ class PoissonSolver:
         )
 
         cp = self._cp
+        float_gpu = cp.float64
 
         # Initialize charge density
         if rho is None:
@@ -461,11 +462,11 @@ class PoissonSolver:
             electrode_voltages = self.electrode_voltages
 
         # Transfer arrays to GPU
-        phi_gpu = cp.asarray(phi_initial, dtype=cp.float32)
-        rho_gpu = cp.asarray(rho, dtype=cp.float32)
-        epsilon_gpu = cp.asarray(self.epsilon, dtype=cp.float32)
+        phi_gpu = cp.asarray(phi_initial, dtype=float_gpu)
+        rho_gpu = cp.asarray(rho, dtype=float_gpu)
+        epsilon_gpu = cp.asarray(self.epsilon, dtype=float_gpu)
         electrode_mask_gpu = cp.asarray(electrode_mask)
-        electrode_voltages_gpu = cp.asarray(electrode_voltages, dtype=cp.float32)
+        electrode_voltages_gpu = cp.asarray(electrode_voltages, dtype=float_gpu)
 
         # Set electrode potential (fixed values)
         phi_gpu[electrode_mask_gpu] = electrode_voltages_gpu[electrode_mask_gpu]

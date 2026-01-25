@@ -60,8 +60,8 @@ def test_material_database():
     assert si_params["epsilon_r"] == 11.7
     assert si_params["electron_affinity"] == 4.05
     assert si_params["band_gap"] == 1.12
-    assert si_params["effective_mass_e"] == 0.26
-    assert si_params["effective_mass_h"] == 0.36
+    assert si_params["effective_mass_e"] == 0.19  # Transverse effective mass
+    # effective_mass_h is not defined in database (commented out)
 
     # Check SiO2 parameters
     sio2_params = MATERIAL_DATABASE["SiO2"]
@@ -78,8 +78,8 @@ def test_get_material_from_database():
     assert si.epsilon_r == 11.7
     assert si.electron_affinity == 4.05
     assert si.band_gap == 1.12
-    assert si.effective_mass_e == 0.26
-    assert si.effective_mass_h == 0.36
+    assert si.effective_mass_e == 0.19  # Transverse effective mass
+    assert si.effective_mass_h is None  # Not defined in database
 
     sio2 = get_material("SiO2")
     assert sio2.name == "SiO2"

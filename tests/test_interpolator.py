@@ -55,8 +55,10 @@ class TestPotentialInterpolatorInit:
         assert 0 <= interp.z_index < manager.nz
         assert interp.n_electrodes == 2  # test_config_small.yaml has 2 electrodes
         assert interp.electrode_names == ["gate_left", "gate_right"]
-        assert interp.basis_phi.shape == (2, manager.nx, manager.ny)
-        assert interp.particular_band_edge.shape == (manager.nx, manager.ny)
+        # Note: interp.nx/ny may differ from manager.nx/ny due to ghost point removal
+        # for periodic boundaries
+        assert interp.basis_phi.shape == (2, interp.nx, interp.ny)
+        assert interp.particular_band_edge.shape == (interp.nx, interp.ny)
 
     def test_init_at_surface(self, structure_manager):
         """Test initialization at surface (z=0)"""
@@ -122,7 +124,7 @@ class TestPotentialInterpolatorInterpolation:
         band_edge = interp.interpolate(voltages)
 
         # Should equal particular solution (already as band edge)
-        assert band_edge.shape == (manager.nx, manager.ny)
+        assert band_edge.shape == (interp.nx, interp.ny)
         np.testing.assert_allclose(band_edge, interp.particular_band_edge, atol=1e-10)
 
     def test_interpolate_single_electrode(self, structure_manager):
@@ -269,7 +271,8 @@ class TestPotentialInterpolatorAccuracy:
 
         solver = PoissonSolver(manager, **SOLVER_PARAMS)
         result_direct = solver.solve(rho=None, verbose=False)
-        Ec_direct = result_direct.Ec[interp.z_index, :, :]  # Get Ec, not phi
+        # Apply same slicing as interpolator (excludes ghost points for periodic BC)
+        Ec_direct = result_direct.Ec[interp.z_index, interp.x_slice, interp.y_slice]
 
         # Should be very close (within solver tolerance)
         # Looser tolerance due to iterative solver convergence differences
@@ -307,7 +310,8 @@ class TestPotentialInterpolatorAccuracy:
 
             solver = PoissonSolver(manager, **SOLVER_PARAMS)
             result_direct = solver.solve(rho=None, verbose=False)
-            Ec_direct = result_direct.Ec[interp.z_index, :, :]  # Get Ec, not phi
+            # Apply same slicing as interpolator (excludes ghost points for periodic BC)
+            Ec_direct = result_direct.Ec[interp.z_index, interp.x_slice, interp.y_slice]
 
             # Compare (looser tolerance due to solver convergence)
             np.testing.assert_allclose(
@@ -403,7 +407,8 @@ class TestPotentialInterpolatorRepr:
         assert "z_position" in repr_str
         assert "z_index" in repr_str
         assert "n_electrodes=2" in repr_str  # test_config_small has 2 electrodes
-        assert f"grid=({manager.nx}, {manager.ny})" in repr_str
+        # Note: interp uses its own nx/ny which may differ from manager due to ghost points
+        assert f"grid=({interp.nx}, {interp.ny})" in repr_str
 
 
 if __name__ == "__main__":
