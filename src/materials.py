@@ -50,23 +50,39 @@ class Material:
 
 
 # Material database (at cryogenic temperature ~4K)
+# TODO: Add references for each parameters
 MATERIAL_DATABASE: Dict[str, Dict] = {
     "Si": {
         "epsilon_r": 11.7,
         "electron_affinity": 4.05,  # eV at 4K
         "band_gap": 1.12,  # eV at 4K (indirect gap)
-        "effective_mass_e": 0.26,  # Longitudinal effective mass (m0 units)
-        "effective_mass_h": 0.36,  # Heavy hole effective mass (m0 units)
+        "effective_mass_e": 0.19,  # Transverse effective mass (m0 units)
+        # "effective_mass_h": 0.36,  # Heavy hole effective mass (m0 units)
+    },
+    # Strained Silicon (tensile strain on SiGe substrate)
+    "Strained_Si": {
+        "epsilon_r": 11.7,
+        "electron_affinity": 4.05,  # eV (assumed same as Si)
+        "band_gap": 1.08,  # eV (approximate for strained Si at 4K)
+        "effective_mass_e": 0.19,  # Approximate (m0 units)
+        # "effective_mass_h": 0.30,  # Approximate (m0 units)
     },
     "SiO2": {
         "epsilon_r": 3.9,
         "electron_affinity": 0.9,  # eV
         "band_gap": 9.0,  # eV (insulator)
-        "effective_mass_e": None,  # Not relevant for insulator
-        "effective_mass_h": None,
+        # "effective_mass_e": None,  # Not relevant for insulator
+        # "effective_mass_h": None,
+    },
+    # Silicon-Germanium alloy (Si1-xGex), x=0.3
+    "SiGe0.3": {
+        "epsilon_r": 13.1,
+        "electron_affinity": 4.0,  # eV (approximate)
+        "band_gap": 1.05,  # eV (approximate for Si0.7Ge0.3 at 4K)
+        # "effective_mass_e": 0.22,  # Approximate (m0 units)
+        # "effective_mass_h": 0.29,  # Approximate (m0 units)
     },
     # Placeholder for future materials
-    # "SiGe": {...},
     # "GaAs": {...},
 }
 
@@ -106,8 +122,7 @@ def get_material(name: str, overrides: Optional[Dict] = None) -> Material:
     if name not in MATERIAL_DATABASE:
         available = ", ".join(MATERIAL_DATABASE.keys())
         raise ValueError(
-            f"Material '{name}' not found in database. "
-            f"Available materials: {available}"
+            f"Material '{name}' not found in database. Available materials: {available}"
         )
 
     # Start with database defaults
