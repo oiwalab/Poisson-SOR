@@ -617,8 +617,9 @@ print(f"Ground state: {energies[0]:.4f} eV")
 print(f"Level spacing: {(energies[1] - energies[0]) * 1000:.2f} meV")
 ```
 
-#### `GDSLoader`
+#### `GDSLoader (Beta)`
 Loads electrode patterns from GDSII files and rasterizes them to the computational grid.
+This feature is experimental, we don't guarantee the functionality.
 
 ```python
 from gds_loader import GDSLoader
@@ -699,7 +700,7 @@ where:
 - **JIT Compilation**: First solve takes ~2-3× longer due to Numba compilation
 - **Grid Size**: Computation time scales as O(N³) where N is grid points per dimension
 - **Interpolation**: ~1000× faster than re-solving once basis functions are computed
-- **Typical Runtime**: 100³ grid ~5-10s per solve, 20³ grid ~0.5s per solve
+- **Typical Runtime**: 100³ grid <1s per solve
 
 
 ## License
