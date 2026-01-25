@@ -241,6 +241,38 @@ class StructureManager:
         self.electrode_voltages = np.zeros((self.nz, self.nx, self.ny))
         self.charge_density = np.zeros((self.nz, self.nx, self.ny))
 
+    def _resolve_layer_z_ranges(self) -> None:
+        """Resolve z_range for layers specified with thickness
+
+        If a layer has 'thickness' instead of 'z_range', calculate z_range
+        based on the order of layers (from surface to bottom).
+
+        Layers are processed in order, stacking from z=0 (surface) downward.
+        """
+        current_z = 0.0  # Start from surface
+
+        for layer in self.layers:
+            if "z_range" in layer:
+                # z_range explicitly specified - use as is
+                continue
+            elif "thickness" in layer:
+                # Calculate z_range from thickness
+                thickness = layer["thickness"]
+                if thickness <= 0:
+                    raise ValueError(
+                        f"Layer '{layer.get('name', 'Unknown')}': "
+                        f"thickness must be positive, got {thickness}"
+                    )
+                z_max = current_z
+                z_min = current_z - thickness
+                layer["z_range"] = [z_max, z_min]
+                current_z = z_min
+            else:
+                raise ValueError(
+                    f"Layer '{layer.get('name', 'Unknown')}': "
+                    f"must specify either 'z_range' or 'thickness'"
+                )
+
     def _validate_layers(self) -> None:
         """Check validity of layer structure
 
@@ -258,6 +290,9 @@ class StructureManager:
         """
         if not self.layers:
             return
+
+        # Resolve thickness to z_range first
+        self._resolve_layer_z_ranges()
 
         # Sort in descending order by z_range[0] (z_max) (from surface to bottom)
         sorted_layers = sorted(
