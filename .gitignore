@@ -18,3 +18,8 @@ profiling/results/*
 *.npz
 *.png
 *.gif
+work/Drawing2.GDS
+work/gds_example.yaml
+work/test_gds_loader.ipynb
+work/test.yaml
+work/tutorial_electrodes.gds
