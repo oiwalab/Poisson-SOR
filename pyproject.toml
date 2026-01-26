@@ -5,7 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "cupy>=13.6.0",
+    "cupy-cuda13x>=13.6.0",
     "gdspy>=1.6.13",
     "ipykernel>=7.0.1",
     "matplotlib>=3.10.7",
