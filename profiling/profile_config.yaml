@@ -47,5 +47,5 @@ boundary_conditions:
     value: 0.0
 
   y_sides:
-    type: "periodic"
+    type: "dirichlet"
     value: 0.0

@@ -38,7 +38,7 @@ def run_solver(config_path: Path, method: str = "sor"):
 
     # Initialize solver
     print("\n[2] Initializing solver...")
-    solver = PoissonSolver(manager, method=method, omega=1.8)
+    solver = PoissonSolver(manager, method=method, omega=1.8, use_julia=False, use_gpu=True)
 
     print(f"  Grid size: ({manager.nx}, {manager.ny}, {manager.nz})")
     print(f"  Method: {solver.method}")
